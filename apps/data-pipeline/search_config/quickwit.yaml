@@ -1,0 +1,103 @@
+version: 0.8
+
+index_id: filings
+
+doc_mapping:
+  mode: dynamic
+  field_mappings:
+    # Identifiers
+    - name: unique_page_id
+      type: text
+      tokenizer: raw
+      stored: true
+      fast: true
+
+    - name: document_id
+      type: text
+      tokenizer: raw
+      stored: true
+      fast: true
+
+    - name: exchange
+      type: text
+      tokenizer: raw
+      stored: true
+      fast: true
+
+    # Company metadata
+    - name: company_id
+      type: text
+      tokenizer: raw
+      stored: true
+      fast: true
+
+    - name: company_name
+      type: text
+      tokenizer: default
+      stored: true
+
+    # Filing metadata
+    - name: filing_date
+      type: datetime
+      input_formats:
+        - "%Y-%m-%d"
+        - "%Y%m%d"
+      stored: true
+      fast: true
+
+    - name: filing_type
+      type: text
+      tokenizer: raw
+      stored: true
+      fast: true
+
+    - name: title
+      type: text
+      tokenizer: default
+      stored: true
+
+    # Page info
+    - name: page_number
+      type: u64
+      stored: true
+      fast: true
+
+    - name: total_pages
+      type: u64
+      stored: true
+      fast: true
+
+    # Content
+    - name: text
+      type: text
+      tokenizer: default
+      record: position
+      stored: true
+
+    # Source reference
+    - name: s3_key
+      type: text
+      tokenizer: raw
+      stored: true
+
+    - name: file_type
+      type: text
+      tokenizer: raw
+      stored: true
+      fast: true
+
+  timestamp_field: ~
+
+search_settings:
+  default_search_fields:
+    - text
+    - title
+    - company_name
+
+indexing_settings:
+  commit_timeout_secs: 60
+  merge_policy:
+    type: stable_log
+    min_level_num_docs: 100000
+    merge_factor: 10
+    max_merge_factor: 12

@@ -1,0 +1,93 @@
+# Production Dockerfile for AsiaFilings Backend
+# Built from project root with monorepo workspace support
+
+# Stage 1: Build
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+# Install build dependencies for native modules (bcrypt, prisma, etc.)
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    openssl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy workspace package files
+COPY package.json package-lock.json* ./
+COPY shared/package.json ./shared/
+COPY backend/package.json ./backend/
+
+# Install ALL dependencies using workspaces (ignore scripts to skip husky)
+RUN npm ci --workspace=backend --workspace=shared --ignore-scripts
+
+# Copy shared source and build
+COPY shared ./shared
+WORKDIR /app/shared
+RUN npm run build || true
+
+# Copy backend source
+WORKDIR /app
+COPY backend/prisma ./backend/prisma/
+COPY backend/tsconfig.json ./backend/
+COPY backend/src ./backend/src/
+
+# Generate Prisma Client
+WORKDIR /app/backend
+RUN npx prisma generate
+
+# Build TypeScript
+RUN npm run build
+
+# Stage 2: Production
+FROM node:20-slim
+
+WORKDIR /app
+
+# Install runtime dependencies for Prisma
+RUN apt-get update && apt-get install -y \
+    openssl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN groupadd -r nodejs && useradd -r -g nodejs nodejs
+
+# Copy workspace structure for production install
+COPY package.json package-lock.json* ./
+COPY shared/package.json ./shared/
+COPY backend/package.json ./backend/
+COPY backend/prisma ./backend/prisma/
+
+# Copy built shared package
+COPY --from=builder /app/shared/dist ./shared/dist
+
+# Install production dependencies (ignore scripts to skip husky)
+RUN npm ci --workspace=backend --workspace=shared --omit=dev --ignore-scripts && npm cache clean --force
+
+# Copy built application from builder stage
+COPY --from=builder /app/backend/dist ./backend/dist
+
+# Copy Prisma client (installed at root level with npm workspaces)
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+
+# Change ownership to non-root user
+RUN chown -R nodejs:nodejs /app
+
+# Switch to non-root user
+USER nodejs
+
+WORKDIR /app/backend
+
+# Expose port
+EXPOSE 3001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Start application
+CMD ["node", "dist/index.js"]

@@ -1,0 +1,111 @@
+/* Korean Typography Styles */
+
+.korean-text {
+  font-family: 'Apple SD Gothic Neo', 'Noto Sans CJK KR', 'Malgun Gothic', '맑은 고딕', sans-serif;
+  line-height: 1.6;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.korean-text-mixed {
+  font-family: 'Apple SD Gothic Neo', 'Noto Sans CJK KR', 'Malgun Gothic', '맑은 고딕', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.korean-text-performance {
+  contain: layout style paint;
+  will-change: auto;
+}
+
+.korean-section-number {
+  font-weight: 600;
+  margin-right: 0.5rem;
+  color: #4f46e5;
+}
+
+.korean-financial-term {
+  font-weight: 500;
+  color: #059669;
+  cursor: help;
+}
+
+.korean-search-highlight {
+  background-color: #fef3c7;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-weight: 500;
+}
+
+.korean-currency {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+  font-weight: 500;
+}
+
+.korean-currency.negative {
+  color: #dc2626;
+}
+
+.korean-unit {
+  margin-left: 0.125rem;
+  font-size: 0.875em;
+  color: #6b7280;
+}
+
+.korean-heading {
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  color: #111827;
+}
+
+.document-viewer {
+  font-family: 'Apple SD Gothic Neo', 'Noto Sans CJK KR', 'Malgun Gothic', '맑은 고딕', sans-serif;
+}
+
+.document-sidebar {
+  font-size: 0.875rem;
+}
+
+.korean-document-section {
+  margin-bottom: 1rem;
+}
+
+.korean-document-section.active {
+  background-color: #f0f9ff;
+  border-left: 4px solid #0ea5e9;
+  padding-left: 1rem;
+}
+
+.financial-table {
+  font-family: 'Apple SD Gothic Neo', 'Noto Sans CJK KR', 'Malgun Gothic', '맑은 고딕', sans-serif;
+}
+
+/* Responsive font sizes */
+@media (max-width: 640px) {
+  .korean-text {
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+  
+  .korean-heading {
+    font-size: 1.125rem;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .korean-financial-term {
+    color: #065f46;
+    font-weight: 600;
+  }
+  
+  .korean-search-highlight {
+    background-color: #fed7aa;
+    color: #9a3412;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .korean-text-performance {
+    will-change: auto;
+  }
+}

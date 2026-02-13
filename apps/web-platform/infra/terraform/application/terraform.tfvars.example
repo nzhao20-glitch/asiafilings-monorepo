@@ -1,0 +1,29 @@
+# SmartDART Application Layer - Example Variables
+# Copy this to terraform.tfvars and customize
+
+# General Configuration
+project_name = "smartdart"
+environment  = "prod"
+aws_region   = "ap-northeast-2"
+
+# Networking
+use_default_vpc = true
+# acm_certificate_arn = "arn:aws:acm:ap-northeast-2:123456789012:certificate/xxx"
+
+# ECS Configuration (Cost-Optimized)
+container_port     = 3001
+ecs_task_cpu       = 256  # 0.25 vCPU
+ecs_task_memory    = 512  # 512MB
+ecs_desired_count  = 1
+ecs_min_count      = 1
+ecs_max_count      = 3
+
+# Application
+frontend_url   = "http://localhost:3000"
+s3_bucket_name = "smartdart-documents-prod"
+
+# Secrets (create in foundation layer or manually in Secrets Manager)
+# database_url_secret_arn   = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:smartdart/prod/database-url-xxx"
+# jwt_secret_arn            = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:smartdart/prod/jwt-secret-xxx"
+# jwt_refresh_secret_arn    = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:smartdart/prod/jwt-refresh-secret-xxx"
+# cookie_secret_arn         = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:smartdart/prod/cookie-secret-xxx"

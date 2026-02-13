@@ -1,0 +1,106 @@
+# Docker Compose for local testing of production Docker image
+# This simulates the ECS Fargate environment locally
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: koreansec-db
+    environment:
+      POSTGRES_DB: koreansec_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - koreansec-network
+
+  # Redis for BullMQ
+  redis:
+    image: redis:7-alpine
+    container_name: koreansec-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - koreansec-network
+
+  # Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: koreansec-backend
+    environment:
+      # Server
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3001
+      LOG_LEVEL: info
+
+      # Database
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/koreansec_db
+
+      # Redis
+      REDIS_URL: redis://redis:6379
+
+      # JWT & Auth
+      JWT_SECRET: your-jwt-secret-change-in-production
+      JWT_EXPIRES_IN: 7d
+      COOKIE_SECRET: your-cookie-secret-change-in-production
+
+      # DART API
+      DART_API_KEY: ${DART_API_KEY}
+      DART_API_BASE_URL: https://opendart.fss.or.kr/api
+
+      # Frontend URL (for CORS)
+      FRONTEND_URL: http://localhost:3000
+      API_URL: http://localhost:3001
+
+      # AWS (not needed for local, but backend might reference)
+      AWS_REGION: ap-northeast-2
+      S3_BUCKET: beta-koreasec-documents
+
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - koreansec-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  koreansec-network:
+    driver: bridge

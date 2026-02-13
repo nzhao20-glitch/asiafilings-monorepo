@@ -1,0 +1,54 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "serverless-functions",
+  "sourceRoot": "apps/serverless-functions",
+  "projectType": "application",
+  "tags": ["scope:serverless", "type:app", "lang:go"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/serverless-functions",
+        "command": "make build-lambdas"
+      },
+      "inputs": ["production", "^production"],
+      "outputs": [
+        "{projectRoot}/services/scraper/cmd/scraper-lambda/scraper-lambda.zip",
+        "{projectRoot}/services/downloader/cmd/downloader-lambda/downloader-lambda.zip",
+        "{projectRoot}/services/orchestrator/cmd/check-status/check-status.zip",
+        "{projectRoot}/services/orchestrator/cmd/download-trigger/download-trigger.zip",
+        "{projectRoot}/services/orchestrator/cmd/extraction-trigger/extraction-trigger.zip",
+        "{projectRoot}/services/orchestrator/cmd/notify/notify.zip"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/serverless-functions",
+        "command": "go test ./... -v"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/serverless-functions",
+        "command": "go vet ./..."
+      }
+    },
+    "clean": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/serverless-functions",
+        "command": "make clean"
+      }
+    },
+    "deploy": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/serverless-functions/infra/environments/prod",
+        "command": "terraform apply"
+      },
+      "dependsOn": ["build"]
+    }
+  }
+}

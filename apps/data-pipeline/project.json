@@ -1,0 +1,44 @@
+{
+  "name": "data-pipeline",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/data-pipeline/etl_worker",
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cd etl_worker && docker build --platform linux/arm64 -t filing-etl:latest .",
+        "cwd": "apps/data-pipeline"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cd etl_worker && pip install -r requirements.txt && cd src && python -c \"from extractor import process_pdf_bytes; print('Extractor module OK')\"",
+        "cwd": "apps/data-pipeline"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "python3 -m py_compile etl_worker/src/main.py && python3 -m py_compile etl_worker/src/extractor.py && python3 -m py_compile etl_worker/src/s3_utils.py && python3 -m py_compile etl_worker/src/dynamo_utils.py && echo 'All modules compile OK'",
+        "cwd": "apps/data-pipeline"
+      }
+    },
+    "deploy": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "make push",
+        "cwd": "apps/data-pipeline"
+      }
+    },
+    "deploy-infra": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cd infra && terraform init && terraform apply",
+        "cwd": "apps/data-pipeline"
+      }
+    }
+  },
+  "tags": ["scope:data", "type:app", "lang:python"]
+}

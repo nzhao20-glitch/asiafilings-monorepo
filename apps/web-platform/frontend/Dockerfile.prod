@@ -1,0 +1,68 @@
+# AsiaFilings Frontend Production Dockerfile
+# Multi-stage build for optimized image size
+
+# Stage 1: Dependencies
+FROM node:20-alpine AS deps
+WORKDIR /app
+
+# Copy workspace package files
+COPY package.json package-lock.json* ./
+COPY shared/package.json ./shared/
+COPY frontend/package.json ./frontend/
+
+# Install dependencies (ignore scripts to skip husky)
+RUN npm ci --workspace=frontend --workspace=shared --ignore-scripts
+
+# Stage 2: Builder
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+# Copy dependencies from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
+
+# Copy source code
+COPY shared ./shared
+COPY frontend ./frontend
+COPY package.json package-lock.json* ./
+
+# Set build-time environment
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+# Build argument for API URL (must be set at build time for NEXT_PUBLIC_*)
+# Empty string = relative URLs (goes through nginx proxy)
+ARG NEXT_PUBLIC_API_URL=""
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+# Build the application
+WORKDIR /app/frontend
+RUN npm run build
+
+# Stage 3: Production runner
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Create non-root user for security
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy standalone build (requires output: 'standalone' in next.config.mjs)
+# Next.js standalone creates nested structure, copy the frontend subfolder contents
+COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/standalone/frontend ./
+COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/standalone/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/static ./.next/static
+
+# Switch to non-root user
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Start the server
+CMD ["node", "server.js"]

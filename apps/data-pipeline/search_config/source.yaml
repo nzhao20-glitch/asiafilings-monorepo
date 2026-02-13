@@ -1,0 +1,16 @@
+version: 0.8
+
+source_id: s3-sqs-source
+source_type: file
+
+params:
+  notifications:
+    - type: sqs
+      queue_url: "${SQS_QUEUE_URL}"
+      message_type: s3_notification
+
+# Alternative: Direct file source for manual indexing
+# source_id: s3-file-source
+# source_type: file
+# params:
+#   filepath: s3://${BUCKET_PROCESSED}/processed/*.jsonl

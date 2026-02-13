@@ -1,0 +1,34 @@
+# Copy to terraform.tfvars and customize
+
+project_name = "filing-etl"
+environment  = "dev"
+aws_region   = "ap-east-1"
+
+# S3 Buckets
+# Source PDFs bucket (existing)
+bucket_raw       = "pdfs-128638789653"
+# Extraction output bucket (will be created if create_buckets=true)
+bucket_processed = "filing-extractions-128638789653"
+create_buckets   = true
+
+# Batch Configuration
+ecr_image_uri = "123456789012.dkr.ecr.ap-east-1.amazonaws.com/filing-etl:latest"
+batch_vcpus   = 1
+batch_memory  = 2048
+chunk_size    = 1000
+
+# Quickwit Configuration
+quickwit_indexer_instance_type  = "t4g.medium"
+quickwit_searcher_instance_type = "r7gd.xlarge"
+quickwit_key_pair               = ""
+quickwit_version                = "0.8.1"
+postgres_password               = "change-me-to-a-strong-password"
+
+# Network Configuration
+vpc_id     = "vpc-xxxxxxxxx"
+subnet_ids = ["subnet-xxxxxxxx", "subnet-yyyyyyyy"]
+
+tags = {
+  Team    = "data-engineering"
+  Project = "filing-search"
+}

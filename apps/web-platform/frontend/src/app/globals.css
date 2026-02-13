@@ -1,0 +1,273 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f0f4f8;
+  --foreground: #0f172a;
+  --gradient-start: #eff6ff;
+  --gradient-end: #dbeafe;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  color: var(--foreground);
+  background: #f8f9fa;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Static mesh gradient background */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background:
+    radial-gradient(circle at 20% 50%, rgba(37, 99, 235, 0.04) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(100, 100, 120, 0.03) 0%, transparent 50%),
+    radial-gradient(circle at 40% 20%, rgba(147, 51, 234, 0.02) 0%, transparent 50%),
+    radial-gradient(circle at 60% 70%, rgba(59, 130, 246, 0.03) 0%, transparent 50%);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Grid pattern overlay - REMOVED per user request */
+
+/* Floating orbs - static, no animation */
+.floating-orbs {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  opacity: 0.15;
+}
+
+.orb-1 {
+  width: 400px;
+  height: 400px;
+  background: linear-gradient(135deg, #93c5fd, #60a5fa);
+  top: 5%;
+  left: 5%;
+}
+
+.orb-2 {
+  width: 350px;
+  height: 350px;
+  background: linear-gradient(135deg, #7dd3fc, #38bdf8);
+  top: 50%;
+  right: 10%;
+}
+
+.orb-3 {
+  width: 300px;
+  height: 300px;
+  background: linear-gradient(135deg, #c4b5fd, #a78bfa);
+  bottom: 10%;
+  left: 40%;
+}
+
+.orb-4 {
+  width: 450px;
+  height: 450px;
+  background: linear-gradient(135deg, #93c5fd, #60a5fa);
+  top: 30%;
+  right: 35%;
+}
+
+/* Professional typography */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+h1 {
+  font-size: 2.25rem;
+  letter-spacing: -0.025em;
+}
+
+h2 {
+  font-size: 1.875rem;
+  letter-spacing: -0.025em;
+}
+
+h3 {
+  font-size: 1.5rem;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f5f5f5;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d4d4d4;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a3a3a3;
+}
+
+/* Dropdown scrollbar - always visible */
+.dropdown-scroll {
+  overflow-y: scroll;
+  scrollbar-width: thin;
+  scrollbar-color: #94a3b8 #f1f5f9;
+}
+
+.dropdown-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.dropdown-scroll::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+.dropdown-scroll::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 4px;
+}
+
+.dropdown-scroll::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* PDF.js text layer - allow text selection with transparent overlay.
+ * IMPORTANT: Do NOT override position, top, left, width, height, or overflow here.
+ * The .textLayer class from pdfjs uses { inset: 0; overflow: hidden } to perfectly
+ * align with the canvas, and pdfjs's setLayerDimensions() sets CSS calc dimensions.
+ * Overriding these causes text layer misalignment with the canvas rendering. */
+.react-pdf__Page__textContent {
+  pointer-events: all !important;
+  z-index: 3 !important; /* Above annotations so selection highlight is visible */
+}
+
+.react-pdf__Page__textContent span {
+  pointer-events: all !important;
+}
+
+/* Make text visible on selection */
+.react-pdf__Page__textContent span::selection {
+  background: rgba(0, 100, 255, 0.3) !important;
+  color: transparent !important;
+}
+
+/* Search highlight - <mark> elements inside text layer spans */
+.react-pdf__Page__textContent mark.search-highlight {
+  background: rgba(255, 215, 0, 0.4) !important;
+  color: transparent !important;
+  border-radius: 2px;
+  padding: 0;
+}
+
+/* PDF.js annotation layer (for hyperlinks) */
+.react-pdf__Page__annotations {
+  z-index: 2 !important;
+  pointer-events: none !important; /* Let clicks pass through */
+}
+
+.react-pdf__Page__annotations .linkAnnotation > a {
+  cursor: pointer !important;
+  pointer-events: all !important;
+  border-bottom: 2px solid #3b82f6 !important;
+  padding-bottom: 2px !important;
+  position: relative !important;
+  display: inline-block !important;
+}
+
+.react-pdf__Page__annotations .linkAnnotation > a::after {
+  content: ' 🔗' !important;
+  font-size: 9px !important;
+  opacity: 0.6 !important;
+  margin-left: 2px !important;
+}
+
+.react-pdf__Page__annotations .linkAnnotation > a:hover {
+  border-bottom: 2px solid #2563eb !important;
+}
+
+.react-pdf__Page__annotations .linkAnnotation > a:hover::after {
+  opacity: 0.9 !important;
+}
+
+@layer components {
+  /* Modern card styling with 3D depth */
+  .card {
+    @apply bg-white rounded-xl shadow-elevated border border-neutral-200/50 transition-all duration-300 hover:shadow-strong hover:-translate-y-1;
+  }
+
+  .card-flat {
+    @apply bg-white rounded-xl shadow-medium border border-neutral-200/50;
+  }
+
+  /* Professional button styles with depth */
+  .btn-primary {
+    @apply bg-gradient-to-br from-primary-500 to-primary-600 text-white px-5 py-2.5 rounded-lg font-medium hover:from-primary-600 hover:to-primary-700 transition-all duration-200 shadow-medium hover:shadow-elevated;
+  }
+
+  .btn-secondary {
+    @apply bg-gradient-to-br from-secondary-500 to-secondary-600 text-white px-5 py-2.5 rounded-lg font-medium hover:from-secondary-600 hover:to-secondary-700 transition-all duration-200 shadow-medium hover:shadow-elevated;
+  }
+
+  .btn-outline {
+    @apply bg-white text-neutral-700 px-5 py-2.5 rounded-lg font-medium border-2 border-neutral-300 hover:bg-neutral-50 hover:border-primary-400 transition-all duration-200 shadow-soft;
+  }
+
+  /* Badge styles with depth */
+  .badge {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold shadow-soft;
+  }
+
+  .badge-primary {
+    @apply bg-gradient-to-r from-primary-100 to-primary-200 text-primary-800 border border-primary-300/50;
+  }
+
+  .badge-secondary {
+    @apply bg-gradient-to-r from-secondary-100 to-secondary-200 text-secondary-800 border border-secondary-300/50;
+  }
+
+  .badge-accent {
+    @apply bg-gradient-to-r from-accent-100 to-accent-200 text-accent-800 border border-accent-300/50;
+  }
+
+  /* Input with depth */
+  .input-3d {
+    @apply shadow-inner-soft border-2 focus:shadow-glow-blue transition-all duration-200;
+  }
+}

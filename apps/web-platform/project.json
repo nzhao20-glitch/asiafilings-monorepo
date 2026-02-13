@@ -1,0 +1,84 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "web-platform",
+  "sourceRoot": "apps/web-platform",
+  "projectType": "application",
+  "tags": ["scope:web", "type:app"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/web-platform",
+        "command": "npm run build"
+      },
+      "inputs": ["production", "^production"],
+      "outputs": [
+        "{projectRoot}/frontend/.next",
+        "{projectRoot}/backend/dist"
+      ]
+    },
+    "dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/web-platform",
+        "command": "npm run dev"
+      }
+    },
+    "dev:frontend": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/web-platform",
+        "command": "npm run dev:frontend"
+      }
+    },
+    "dev:backend": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/web-platform",
+        "command": "npm run dev:backend"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/web-platform",
+        "command": "npm run test"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/web-platform",
+        "command": "npm run lint"
+      }
+    },
+    "type-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/web-platform",
+        "command": "npm run type-check"
+      }
+    },
+    "docker:up": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/web-platform",
+        "command": "docker-compose up -d"
+      }
+    },
+    "docker:down": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/web-platform",
+        "command": "docker-compose down"
+      }
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/web-platform",
+        "command": "npm run dev"
+      }
+    }
+  }
+}

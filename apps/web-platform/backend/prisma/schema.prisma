@@ -1,0 +1,161 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  company_id String   @db.VarChar(8)
+  name       String   @db.VarChar(255)
+  stockCode  String?  @default("") @map("stock_code") @db.VarChar(20)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  exchange   String   @default("DART")
+
+  @@id([exchange, company_id])
+  @@index([company_id], map: "idx_companies_corp_code")
+  @@map("companies")
+}
+
+model Filing {
+  reportDate        DateTime? @map("report_date") @db.Date
+  createdAt         DateTime  @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+  extraction_status String?   @default("PENDING") @db.VarChar(20)
+  extraction_error  String?
+  sourceId          String    @map("source_id")
+  exchange          String    @default("DART")
+  companyId         String?   @map("company_id")
+  title             String?
+  titleEn           String?   @map("title_en")
+  sourceUrl         String?   @map("source_url")
+  pdfS3Key          String?   @map("pdf_s3_key")
+  filingType        String?   @map("filing_type")
+  filingSubType     String?   @map("filing_sub_type")
+  localPath         String?   @map("local_path")
+  fileExtension     String?   @map("file_extension")
+  pageCount         Int?      @map("page_count")
+  fileSize          Int?      @map("file_size")
+  language          String?   @default("KO")
+  processingStatus  String?   @default("PENDING") @map("processing_status")
+  processingError   String?   @map("processing_error")
+  extraction_s3_key String?
+  ingestedAt        DateTime? @map("ingested_at") @db.Timestamp(6)
+  document_type     String?
+
+  @@id([exchange, sourceId])
+  @@index([exchange], map: "idx_filings_exchange")
+  @@index([exchange, companyId, reportDate], map: "idx_filings_exchange_company_date")
+  @@index([extraction_status], map: "idx_filings_extraction_status")
+  @@index([processingStatus], map: "idx_filings_processing_status")
+  @@index([reportDate], map: "idx_filings_report_date")
+  @@index([sourceId], map: "idx_filings_source_id")
+  @@index([document_type], map: "idx_filings_document_type")
+  @@map("filings")
+}
+
+model ExtractedTable {
+  id         BigInt    @id @default(autoincrement())
+  rcept_no   String    @db.VarChar(14)
+  pageNumber Int       @map("page_number")
+  tableIndex Int       @map("table_index")
+  table_data Json
+  bbox_x0    Float?    @db.Real
+  bbox_y0    Float?    @db.Real
+  bbox_x1    Float?    @db.Real
+  bbox_y1    Float?    @db.Real
+  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@index([table_data], map: "idx_extracted_tables_data", type: Gin)
+  @@index([rcept_no, pageNumber], map: "idx_extracted_tables_page")
+  @@index([rcept_no], map: "idx_extracted_tables_rcept")
+  @@map("extracted_tables")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model embeddings {
+  id               BigInt                @id @default(autoincrement())
+  chunk_id         BigInt                @unique
+  rcept_no         String                @db.VarChar(14)
+  embedding        Unsupported("vector")
+  model_name       String?               @default("Qwen3-Embedding-0.6B") @db.VarChar(100)
+  created_at       DateTime?             @default(now()) @db.Timestamp(6)
+  extracted_chunks extracted_chunks      @relation(fields: [chunk_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([chunk_id], map: "idx_embeddings_chunk")
+  @@index([rcept_no], map: "idx_embeddings_rcept")
+  @@index([embedding], map: "idx_embeddings_vector")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model extracted_chunks {
+  id          BigInt      @id @default(autoincrement())
+  rcept_no    String      @db.VarChar(14)
+  chunk_index Int
+  chunk_text  String
+  token_count Int
+  start_page  Int
+  end_page    Int
+  created_at  DateTime?   @default(now()) @db.Timestamp(6)
+  embeddings  embeddings?
+
+  @@unique([rcept_no, chunk_index])
+  @@index([rcept_no, start_page], map: "idx_chunks_page")
+  @@index([rcept_no], map: "idx_chunks_rcept")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model extracted_content {
+  id           BigInt    @id @default(autoincrement())
+  rcept_no     String    @db.VarChar(14)
+  page_number  Int
+  text_content String?
+  bbox_x0      Float?    @db.Real
+  bbox_y0      Float?    @db.Real
+  bbox_x1      Float?    @db.Real
+  bbox_y1      Float?    @db.Real
+  created_at   DateTime? @default(now()) @db.Timestamp(6)
+
+  @@unique([rcept_no, page_number])
+  @@index([rcept_no, page_number], map: "idx_extracted_content_page")
+  @@index([rcept_no], map: "idx_extracted_content_rcept")
+}
+
+// User authentication models
+enum Role {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  passwordHash String        @map("password_hash")
+  fullName     String        @map("full_name")
+  organization String
+  role         Role          @default(VIEWER)
+  lastLoginAt  DateTime?     @map("last_login_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  sessions     UserSession[]
+
+  @@map("users")
+}
+
+model UserSession {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  refreshToken String   @unique @map("refresh_token")
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_user_sessions_user")
+  @@index([expiresAt], map: "idx_user_sessions_expires")
+  @@map("user_sessions")
+}

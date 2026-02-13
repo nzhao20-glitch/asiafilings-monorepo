@@ -1,0 +1,6 @@
+# SmartDART Foundation Layer - Example Variables
+# Copy this to terraform.tfvars and customize
+
+project_name = "smartdart"
+environment  = "prod"
+aws_region   = "ap-northeast-2"

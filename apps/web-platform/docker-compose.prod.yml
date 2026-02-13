@@ -1,0 +1,83 @@
+# AsiaFilings Production Docker Compose
+# PostgreSQL runs on AWS RDS (not locally)
+# Table extraction runs via AWS Lambda in dartscrape (not locally)
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: asiafilings-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: redis-server --maxmemory 40mb --maxmemory-policy allkeys-lru --save 900 1 --save 300 10
+    deploy:
+      resources:
+        limits:
+          memory: 50M
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
+    container_name: asiafilings-backend
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=450"
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-${JWT_SECRET}}
+      COOKIE_SECRET: ${COOKIE_SECRET:-${JWT_SECRET}}
+      PORT: 3001
+      HOST: 0.0.0.0
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      # Sync workers disabled - dartscrape handles data sync
+      DISABLE_SYNC_WORKERS: "true"
+      # AWS S3 Configuration for document storage
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+    ports:
+      - "0.0.0.0:3001:3001"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.prod
+      args:
+        # Empty string = relative URLs, nginx proxies /api to backend
+        NEXT_PUBLIC_API_URL: ""
+    container_name: asiafilings-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      # Runtime env var (not used for Next.js static build, but kept for reference)
+      NEXT_PUBLIC_API_URL: ""
+    ports:
+      - "0.0.0.0:3000:3000"
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+
+volumes:
+  redis_data:

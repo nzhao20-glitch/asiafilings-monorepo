@@ -1,0 +1,33 @@
+# Copy this file to terraform.tfvars and fill in your values
+
+aws_region = "ap-east-1"
+
+project_name = "hkex-downloader"
+environment  = "prod"
+
+# S3 buckets (shared with filing-etl-pipeline, defaults usually work)
+# pdf_bucket        = "pdfs-128638789653"
+# extraction_bucket = "filing-extractions-128638789653"
+# s3_prefix         = "hkex/"
+
+# PostgreSQL connection string
+# Format: postgres://user:password@host:port/database
+database_url = "postgres://user:password@your-rds-endpoint:5432/hkex"
+
+# VPC configuration (must be same VPC as RDS)
+vpc_id     = "vpc-xxxxxxxxx"
+subnet_ids = ["subnet-xxxxxxxx", "subnet-yyyyyyyy"]
+
+# Security group of your RDS instance (to allow Lambda access)
+rds_security_group_id = "sg-xxxxxxxxx"
+
+# Lambda configuration
+lambda_concurrency = 100  # Concurrent downloads per Lambda
+lambda_memory      = 512  # Memory in MB
+lambda_timeout     = 300  # Timeout in seconds (5 minutes)
+
+# SQS configuration
+sqs_batch_size = 1  # Messages per Lambda invocation
+
+# FireProx proxy URL (optional, leave empty to disable)
+proxy_base_url = ""

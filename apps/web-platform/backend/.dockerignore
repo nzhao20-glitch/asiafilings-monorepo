@@ -1,0 +1,67 @@
+# Dependencies
+node_modules
+npm-debug.log
+yarn-error.log
+package-lock.json.backup
+
+# Build outputs
+dist
+*.tsbuildinfo
+
+# Tests
+test
+*.test.ts
+*.spec.ts
+coverage
+.vitest
+
+# Development files
+.env
+.env.local
+.env.development
+.env.test
+*.dev
+
+# Git
+.git
+.gitignore
+.github
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Documentation
+README.md
+*.md
+docs
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp
+temp
+*.tmp
+
+# Docker
+Dockerfile
+Dockerfile.*
+docker-compose*
+.dockerignore
+
+# Backup files
+*.backup
+*.bak
+*.old

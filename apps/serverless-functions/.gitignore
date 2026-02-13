@@ -1,0 +1,79 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bootstrap
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Downloads
+downloads/
+*.pdf
+*.htm
+*.html
+
+# Database
+*.db
+
+# Go binaries
+hkex-*
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Terraform
+**/terraform.tfvars
+**/terraform.tfstate
+**/terraform.tfstate.backup
+**/.terraform/
+**/.terraform.lock.hcl
+
+# Lambda layers
+scripts/*.zip
+
+# Go binaries without extension (in root directory)
+/job-generator
+/lambda-downloader
+/local-downloader
+/scraper-lambda
+
+# Build artifacts
+bin/
+*.zip
+
+# Test data
+lambda/extractor/*_extraction.json
+lambda/extractor/*_search.json
+lambda/extractor/*_rds_pages.json
+
+# Python packages (installed via pip)
+lambda/extractor/package/
+
+# Python virtual environments
+venv/
+.venv/
+lambda/extractor/venv/
+
+# Local extraction output
+extractions/
+lambda/extractor/extractions/
