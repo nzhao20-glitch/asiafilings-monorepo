@@ -12,8 +12,9 @@ set -e
 # Configuration
 SERVER_IP="18.167.27.8"
 SERVER_USER="ec2-user"
-SSH_KEY="asiafilings-hk-key.pem"
+SSH_KEY_NAME="asiafilings-hk-ec2"
 REMOTE_DIR="/home/ec2-user/AsiaFilings"
+SSM_REGION="${AWS_REGION:-ap-east-1}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -21,17 +22,55 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Find SSH key (check project root and infrastructure/ec2)
-find_ssh_key() {
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local project_root="$(dirname "$script_dir")"
+# Resolve paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="$(dirname "$SCRIPT_DIR")"
+MONOREPO_ROOT="$(cd "$APP_ROOT/../.." && pwd)"
 
-    if [[ -f "$project_root/$SSH_KEY" ]]; then
-        echo "$project_root/$SSH_KEY"
-    elif [[ -f "$project_root/infrastructure/ec2/$SSH_KEY" ]]; then
-        echo "$project_root/infrastructure/ec2/$SSH_KEY"
-    else
+# Fetch SSH key from SSM Parameter Store (on-demand, ephemeral)
+fetch_ssh_key() {
+    local tmp_key
+    tmp_key=$(mktemp /tmp/deploy-key-XXXXXX.pem)
+
+    log_info "Fetching SSH key from SSM: /platform/keys/${SSH_KEY_NAME}"
+
+    local key_value
+    key_value=$(aws ssm get-parameter \
+        --name "/platform/keys/${SSH_KEY_NAME}" \
+        --with-decryption \
+        --region "${SSM_REGION}" \
+        --query 'Parameter.Value' \
+        --output text 2>&1)
+
+    if [[ $? -ne 0 ]]; then
+        # Fallback: try pull-secrets.sh helper
+        local pull_script="${MONOREPO_ROOT}/tools/scripts/pull-secrets.sh"
+        if [[ -x "$pull_script" ]]; then
+            log_warn "Direct SSM fetch failed, trying pull-secrets.sh..."
+            "$pull_script" --type keys --name "${SSH_KEY_NAME}" --output "$tmp_key" --region "${SSM_REGION}"
+            if [[ $? -eq 0 && -f "$tmp_key" ]]; then
+                echo "$tmp_key"
+                return 0
+            fi
+        fi
+
+        log_error "Failed to fetch SSH key from SSM."
+        log_error "  Ensure key is uploaded: /platform/keys/${SSH_KEY_NAME}"
+        log_error "  Upload with: node ${MONOREPO_ROOT}/tools/scripts/migrate-local-to-ssm.js"
+        rm -f "$tmp_key"
         echo ""
+        return 1
+    fi
+
+    echo "$key_value" > "$tmp_key"
+    chmod 600 "$tmp_key"
+    echo "$tmp_key"
+}
+
+# Cleanup temp key on exit
+cleanup_key() {
+    if [[ -n "${SSH_KEY_PATH:-}" && "$SSH_KEY_PATH" == /tmp/deploy-key-* ]]; then
+        rm -f "$SSH_KEY_PATH"
     fi
 }
 
@@ -108,15 +147,14 @@ if [[ ! -f "$ENV_FILE" ]]; then
     exit 1
 fi
 
-# Find SSH key
-SSH_KEY_PATH=$(find_ssh_key)
+# Fetch SSH key from SSM (ephemeral — deleted on exit)
+SSH_KEY_PATH=$(fetch_ssh_key)
 if [[ -z "$SSH_KEY_PATH" ]]; then
-    log_error "SSH key not found. Expected: $SSH_KEY"
-    log_error "Looked in project root and infrastructure/ec2/"
     exit 1
 fi
+trap cleanup_key EXIT
 
-log_info "Using SSH key: $SSH_KEY_PATH"
+log_info "Using SSH key: $SSH_KEY_PATH (ephemeral, will be deleted on exit)"
 
 # SSH command helper
 ssh_cmd() {

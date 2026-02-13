@@ -42,3 +42,40 @@ Thumbs.db
 .nx/workspace-data
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
+
+# ===================================
+# Secrets & Sensitive Files
+# ===================================
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Credential and secret JSON files
+*creds*.json
+*secret*.json
+
+# Terraform
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+.terraform/
+
+# AWS
+.aws/credentials
+
+# SSH
+id_rsa
+id_ed25519
+
+# GitHub tokens
+.github-token
+
+# Generated secret upload scripts (contain secret values)
+tools/scripts/upload-secrets.sh
