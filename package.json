@@ -19,6 +19,9 @@
   "workspaces": [
     "packages/*",
     "apps/*",
-    "libs/*"
+    "libs/*",
+    "!apps/web-platform/frontend",
+    "!apps/web-platform/backend",
+    "!apps/web-platform/shared"
   ]
 }
