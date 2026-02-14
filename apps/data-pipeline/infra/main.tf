@@ -21,8 +21,37 @@ provider "aws" {
   }
 }
 
+# =============================================================================
+# SSM Lookups — Resolve core infrastructure from SSM Parameter Store
+# =============================================================================
+
+data "aws_ssm_parameter" "vpc_id" {
+  name = "/platform/core/${var.environment}/vpc_id"
+}
+
+data "aws_ssm_parameter" "subnet_ids" {
+  name = "/platform/core/${var.environment}/subnet_ids"
+}
+
+data "aws_ssm_parameter" "s3_pdf_bucket" {
+  name = "/platform/core/${var.environment}/s3_pdf_bucket"
+}
+
+data "aws_ssm_parameter" "s3_extraction_bucket" {
+  name = "/platform/core/${var.environment}/s3_extraction_bucket"
+}
+
+data "aws_ssm_parameter" "rds_host" {
+  name = "/platform/core/${var.environment}/rds_host"
+}
+
 locals {
-  name_prefix = "${var.project_name}-${var.environment}"
+  name_prefix      = "${var.project_name}-${var.environment}"
+  vpc_id           = var.vpc_id != "" ? var.vpc_id : data.aws_ssm_parameter.vpc_id.value
+  subnet_ids       = var.subnet_ids != null ? var.subnet_ids : split(",", data.aws_ssm_parameter.subnet_ids.value)
+  bucket_raw       = var.bucket_raw != "" ? var.bucket_raw : data.aws_ssm_parameter.s3_pdf_bucket.value
+  bucket_processed = var.bucket_processed != "" ? var.bucket_processed : data.aws_ssm_parameter.s3_extraction_bucket.value
+  rds_host         = var.rds_host != "" ? var.rds_host : data.aws_ssm_parameter.rds_host.value
 }
 
 # S3 Module - Buckets and SQS Notification
@@ -31,8 +60,8 @@ module "s3" {
 
   project_name     = var.project_name
   environment      = var.environment
-  bucket_raw       = var.bucket_raw
-  bucket_processed = var.bucket_processed
+  bucket_raw       = local.bucket_raw
+  bucket_processed = local.bucket_processed
   create_buckets   = var.create_buckets
 }
 
@@ -52,14 +81,14 @@ module "batch" {
   project_name        = var.project_name
   environment         = var.environment
   name_prefix         = local.name_prefix
-  vpc_id              = var.vpc_id
-  subnet_ids          = var.subnet_ids
+  vpc_id              = local.vpc_id
+  subnet_ids          = local.subnet_ids
   ecr_image_uri       = var.ecr_image_uri
   batch_vcpus         = var.batch_vcpus
   batch_memory        = var.batch_memory
   chunk_size          = var.chunk_size
-  bucket_raw          = var.bucket_raw
-  bucket_processed    = var.bucket_processed
+  bucket_raw          = local.bucket_raw
+  bucket_processed    = local.bucket_processed
   enable_job_tracking = true
 
   depends_on = [module.dynamodb]
@@ -69,19 +98,19 @@ module "batch" {
 module "quickwit" {
   source = "./modules/quickwit"
 
-  project_name           = var.project_name
-  environment            = var.environment
-  name_prefix            = local.name_prefix
-  vpc_id                 = var.vpc_id
-  subnet_id              = var.subnet_ids[0]
-  indexer_instance_types  = var.quickwit_indexer_instance_types
-  searcher_instance_types = var.quickwit_searcher_instance_types
-  key_pair               = var.quickwit_key_pair
-  quickwit_version       = var.quickwit_version
-  rds_host               = var.rds_host
-  rds_password           = var.rds_password
-  bucket_raw             = var.bucket_raw
-  bucket_processed       = var.bucket_processed
-  sqs_queue_arn          = module.s3.sqs_queue_arn
-  sqs_queue_url          = module.s3.sqs_queue_url
+  project_name            = var.project_name
+  environment             = var.environment
+  name_prefix             = local.name_prefix
+  vpc_id                  = local.vpc_id
+  subnet_id               = local.subnet_ids[0]
+  indexer_instance_types   = var.quickwit_indexer_instance_types
+  searcher_instance_types  = var.quickwit_searcher_instance_types
+  key_pair                = var.quickwit_key_pair
+  quickwit_version        = var.quickwit_version
+  rds_host                = local.rds_host
+  rds_password            = var.rds_password
+  bucket_raw              = local.bucket_raw
+  bucket_processed        = local.bucket_processed
+  sqs_queue_arn           = module.s3.sqs_queue_arn
+  sqs_queue_url           = module.s3.sqs_queue_url
 }

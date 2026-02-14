@@ -30,14 +30,17 @@ AsiaFilings/
 
 ## AWS Infrastructure
 
-### Database (RDS PostgreSQL)
+All shared resources (VPC, RDS, S3 data lake) are managed by `infrastructure/core/` and published via SSM at `/platform/core/prod/`. App-level Terraform in `infra/terraform/` reads these via SSM lookups.
+
+### Database (RDS PostgreSQL) — managed by `infrastructure/core/`
 - **Host:** asiafilings-db.cfq288k0iepj.ap-east-1.rds.amazonaws.com
 - **Region:** ap-east-1 (Hong Kong)
 - **Database:** postgres
 - **User:** postgres
 - **Port:** 5432
+- **VPC:** Core VPC (10.0.0.0/16)
 
-### S3 Buckets (ap-east-1)
+### S3 Buckets (ap-east-1) — managed by `infrastructure/core/`
 - **PDFs:** pdfs-128638789653
 - **Table Extractions:** filing-extractions-128638789653
 

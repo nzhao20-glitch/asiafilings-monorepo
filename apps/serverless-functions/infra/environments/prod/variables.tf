@@ -17,15 +17,15 @@ variable "environment" {
 }
 
 variable "pdf_bucket" {
-  description = "S3 bucket for source PDFs (shared with filing-etl-pipeline)"
+  description = "S3 bucket for source PDFs (leave empty to resolve from SSM)"
   type        = string
-  default     = "pdfs-128638789653"
+  default     = ""
 }
 
 variable "extraction_bucket" {
-  description = "S3 bucket for extraction results (shared with filing-etl-pipeline)"
+  description = "S3 bucket for extraction results (leave empty to resolve from SSM)"
   type        = string
-  default     = "filing-extractions-128638789653"
+  default     = ""
 }
 
 variable "s3_prefix" {
@@ -41,18 +41,21 @@ variable "database_url" {
 }
 
 variable "vpc_id" {
-  description = "VPC ID where RDS is running"
+  description = "VPC ID where RDS is running (leave empty to resolve from SSM)"
   type        = string
+  default     = ""
 }
 
 variable "subnet_ids" {
-  description = "Subnet IDs for Lambda (must have access to RDS)"
+  description = "Subnet IDs for Lambda (leave null to resolve from SSM)"
   type        = list(string)
+  default     = null
 }
 
 variable "rds_security_group_id" {
-  description = "Security group ID of the RDS instance"
+  description = "Security group ID of the RDS instance (leave empty to resolve from SSM)"
   type        = string
+  default     = ""
 }
 
 variable "lambda_concurrency" {

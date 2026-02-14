@@ -18,13 +18,15 @@ variable "aws_region" {
 
 # S3 Configuration
 variable "bucket_raw" {
-  description = "S3 bucket for source PDF files"
+  description = "S3 bucket for source PDF files (leave empty to resolve from SSM)"
   type        = string
+  default     = ""
 }
 
 variable "bucket_processed" {
-  description = "S3 bucket for processed JSONL output"
+  description = "S3 bucket for processed JSONL output (leave empty to resolve from SSM)"
   type        = string
+  default     = ""
 }
 
 variable "create_buckets" {
@@ -71,8 +73,9 @@ variable "quickwit_searcher_instance_types" {
 }
 
 variable "rds_host" {
-  description = "RDS PostgreSQL hostname for Quickwit metastore"
+  description = "RDS PostgreSQL hostname for Quickwit metastore (leave empty to resolve from SSM)"
   type        = string
+  default     = ""
 }
 
 variable "rds_password" {
@@ -94,13 +97,15 @@ variable "quickwit_version" {
 }
 
 variable "vpc_id" {
-  description = "VPC ID for resources"
+  description = "VPC ID for resources (leave empty to resolve from SSM)"
   type        = string
+  default     = ""
 }
 
 variable "subnet_ids" {
-  description = "Subnet IDs for resources"
+  description = "Subnet IDs for resources (leave null to resolve from SSM)"
   type        = list(string)
+  default     = null
 }
 
 variable "tags" {

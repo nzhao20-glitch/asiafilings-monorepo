@@ -25,7 +25,7 @@ terraform {
   # backend "s3" {
   #   bucket         = "asiafilings-terraform-state"
   #   key            = "application/terraform.tfstate"
-  #   region         = "ap-northeast-2"
+  #   region         = "ap-east-1"
   #   encrypt        = true
   #   dynamodb_table = "asiafilings-terraform-lock"
   # }
@@ -51,7 +51,7 @@ provider "aws" {
 #   config = {
 #     bucket = "asiafilings-terraform-state"
 #     key    = "foundation/terraform.tfstate"
-#     region = "ap-northeast-2"
+#     region = "ap-east-1"
 #   }
 # }
 
@@ -61,21 +61,44 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
-# VPC (use existing or default)
+# =============================================================================
+# VPC Resolution — Default VPC or Core VPC from SSM
+# =============================================================================
+
+# Default VPC (only when use_default_vpc = true)
 data "aws_vpc" "main" {
-  default = var.use_default_vpc
+  count   = var.use_default_vpc ? 1 : 0
+  default = true
 }
 
 data "aws_subnets" "public" {
+  count = var.use_default_vpc ? 1 : 0
+
   filter {
     name   = "vpc-id"
-    values = [data.aws_vpc.main.id]
+    values = [data.aws_vpc.main[0].id]
   }
 
   filter {
     name   = "map-public-ip-on-launch"
     values = ["true"]
   }
+}
+
+# Core VPC from SSM (when use_default_vpc = false)
+data "aws_ssm_parameter" "vpc_id" {
+  count = var.use_default_vpc ? 0 : 1
+  name  = "/platform/core/${var.environment}/vpc_id"
+}
+
+data "aws_ssm_parameter" "subnet_ids" {
+  count = var.use_default_vpc ? 0 : 1
+  name  = "/platform/core/${var.environment}/subnet_ids"
+}
+
+locals {
+  vpc_id     = var.use_default_vpc ? data.aws_vpc.main[0].id : data.aws_ssm_parameter.vpc_id[0].value
+  subnet_ids = var.use_default_vpc ? data.aws_subnets.public[0].ids : split(",", data.aws_ssm_parameter.subnet_ids[0].value)
 }
 
 # ECR Repository for Docker images
@@ -92,8 +115,8 @@ module "alb" {
 
   project_name    = var.project_name
   environment     = var.environment
-  vpc_id          = data.aws_vpc.main.id
-  public_subnets  = data.aws_subnets.public.ids
+  vpc_id          = local.vpc_id
+  public_subnets  = local.subnet_ids
   certificate_arn = var.acm_certificate_arn
 }
 
@@ -103,7 +126,7 @@ module "security_groups" {
 
   project_name = var.project_name
   environment  = var.environment
-  vpc_id       = data.aws_vpc.main.id
+  vpc_id       = local.vpc_id
   alb_sg_id    = module.alb.alb_security_group_id
 }
 
@@ -116,8 +139,8 @@ module "ecs" {
   aws_region   = var.aws_region
 
   # Networking
-  vpc_id              = data.aws_vpc.main.id
-  private_subnets     = data.aws_subnets.public.ids
+  vpc_id              = local.vpc_id
+  private_subnets     = local.subnet_ids
   ecs_security_groups = [module.security_groups.ecs_security_group_id]
 
   # Load Balancer

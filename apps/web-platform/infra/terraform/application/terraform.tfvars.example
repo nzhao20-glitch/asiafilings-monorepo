@@ -1,14 +1,14 @@
-# SmartDART Application Layer - Example Variables
+# AsiaFilings Application Layer - Example Variables
 # Copy this to terraform.tfvars and customize
 
 # General Configuration
-project_name = "smartdart"
+project_name = "asiafilings"
 environment  = "prod"
-aws_region   = "ap-northeast-2"
+aws_region   = "ap-east-1"
 
 # Networking
-use_default_vpc = true
-# acm_certificate_arn = "arn:aws:acm:ap-northeast-2:123456789012:certificate/xxx"
+use_default_vpc = false
+# acm_certificate_arn = "arn:aws:acm:ap-east-1:128638789653:certificate/xxx"
 
 # ECS Configuration (Cost-Optimized)
 container_port     = 3001
@@ -19,11 +19,11 @@ ecs_min_count      = 1
 ecs_max_count      = 3
 
 # Application
-frontend_url   = "http://localhost:3000"
-s3_bucket_name = "smartdart-documents-prod"
+frontend_url   = "http://18.167.27.8"
+s3_bucket_name = "pdfs-128638789653"
 
 # Secrets (create in foundation layer or manually in Secrets Manager)
-# database_url_secret_arn   = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:smartdart/prod/database-url-xxx"
-# jwt_secret_arn            = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:smartdart/prod/jwt-secret-xxx"
-# jwt_refresh_secret_arn    = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:smartdart/prod/jwt-refresh-secret-xxx"
-# cookie_secret_arn         = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:smartdart/prod/cookie-secret-xxx"
+# database_url_secret_arn   = "arn:aws:secretsmanager:ap-east-1:128638789653:secret:asiafilings/prod/database-url-xxx"
+# jwt_secret_arn            = "arn:aws:secretsmanager:ap-east-1:128638789653:secret:asiafilings/prod/jwt-secret-xxx"
+# jwt_refresh_secret_arn    = "arn:aws:secretsmanager:ap-east-1:128638789653:secret:asiafilings/prod/jwt-refresh-secret-xxx"
+# cookie_secret_arn         = "arn:aws:secretsmanager:ap-east-1:128638789653:secret:asiafilings/prod/cookie-secret-xxx"

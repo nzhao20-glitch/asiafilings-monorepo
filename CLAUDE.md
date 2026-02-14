@@ -25,15 +25,30 @@
 
 Each app is fully isolated with zero cross-dependencies. `nx affected --target=deploy` only triggers the app that changed.
 
-## Infrastructure (Independent Deployability)
+## Infrastructure
 
-Each app owns its own IaC — there is NO central `infrastructure/` folder.
+### Core Infrastructure (`infrastructure/core/`)
+
+Centralized layer owning shared resources: VPC, S3 data lake buckets, and RDS. Publishes resource IDs via SSM Parameter Store for consumer apps.
+
+| File | Resources |
+|------|-----------|
+| `vpc.tf` | VPC (10.0.0.0/16), 3 public subnets (ap-east-1a/b/c), IGW, route table |
+| `s3.tf` | `pdfs-128638789653`, `filing-extractions-128638789653` (versioning, lifecycle: 90d→IA, 365d→Glacier) |
+| `rds.tf` | `asiafilings-db` (db.t4g.micro, PostgreSQL 17.6), security group, subnet group |
+| `ssm.tf` | 9 SSM parameters at `/platform/core/{env}/` |
+
+Registered as Nx project `core-infrastructure` with `init`, `validate`, `plan`, `apply` targets.
+
+### App-Level Infrastructure
+
+Each app owns its own IaC for app-specific resources. Shared resources (VPC, S3, RDS) are resolved from SSM with a `var != "" ? var : ssm_lookup` pattern for backward compatibility.
 
 | App | Infra Path | Resources |
 |-----|-----------|-----------|
 | web-platform | `apps/web-platform/infra/` | Terraform (ECS, ALB, ECR, S3), EC2 deploy scripts, nginx config |
-| serverless-functions | `apps/serverless-functions/infra/` | Terraform modules (Lambda, EventBridge, SQS, Step Functions) |
-| data-pipeline | `apps/data-pipeline/infra/` | Terraform modules (Batch, DynamoDB, S3, Quickwit) |
+| serverless-functions | `apps/serverless-functions/infra/` | Terraform modules (Lambda, SQS, CloudWatch) |
+| data-pipeline | `apps/data-pipeline/infra/` | Terraform modules (Batch, DynamoDB, Quickwit, S3 notifications) |
 
 ## Secret Management (AWS SSM Parameter Store)
 
@@ -42,11 +57,29 @@ Secrets are stored in SSM, never in the repo. The root `.gitignore` blocks `.env
 ### SSM Path Convention
 
 ```
-/platform/{app}/{env}/{KEY}    # Environment variables
+/platform/core/{env}/{KEY}     # Core infrastructure outputs (VPC, S3, RDS) — managed by Terraform
+/platform/shared/{KEY}         # Shared secrets (DATABASE_URL, rds_password) — all services
+/platform/{app}/{env}/{KEY}    # App-specific secrets
 /platform/keys/{key-name}      # SSH private keys
 ```
 
 App name mapping: `web-platform` -> `web`, `serverless-functions` -> `lambda`, `data-pipeline` -> `etl`
+
+#### Core Infrastructure Parameters (`/platform/core/prod/`)
+
+| Parameter | Value |
+|-----------|-------|
+| `vpc_id` | Core VPC ID |
+| `subnet_ids` | Comma-separated public subnet IDs (3 AZs) |
+| `s3_pdf_bucket` | `pdfs-128638789653` |
+| `s3_pdf_bucket_arn` | S3 ARN for PDFs bucket |
+| `s3_extraction_bucket` | `filing-extractions-128638789653` |
+| `s3_extraction_bucket_arn` | S3 ARN for extractions bucket |
+| `rds_endpoint` | `asiafilings-db...rds.amazonaws.com:5432` |
+| `rds_host` | `asiafilings-db...rds.amazonaws.com` |
+| `rds_security_group_id` | RDS security group ID |
+
+These are published by `infrastructure/core/ssm.tf` and consumed by app-level Terraform via `data "aws_ssm_parameter"` lookups.
 
 ### Tooling
 
@@ -63,7 +96,7 @@ App name mapping: `web-platform` -> `web`, `serverless-functions` -> `lambda`, `
 node tools/scripts/migrate-local-to-ssm.js
 bash tools/scripts/upload-secrets.sh
 
-# Pull env vars for local dev
+# Pull env vars for local dev (shared secrets are merged automatically)
 ./tools/scripts/pull-secrets.sh --app web --env dev
 ./tools/scripts/pull-secrets.sh --app lambda --env dev
 ./tools/scripts/pull-secrets.sh --app etl --env dev
@@ -74,6 +107,8 @@ bash tools/scripts/upload-secrets.sh
 # Deploy (SSH key fetched from SSM automatically, deleted on exit)
 ./apps/web-platform/scripts/deploy.sh .env.production
 ```
+
+`pull-secrets.sh` always fetches `/platform/shared/` first, then app-specific secrets. App-specific values override shared ones if the same key exists in both.
 
 ### Available SSH Keys in SSM
 

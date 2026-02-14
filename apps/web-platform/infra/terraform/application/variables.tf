@@ -16,14 +16,14 @@ variable "environment" {
 variable "aws_region" {
   description = "AWS region for resources"
   type        = string
-  default     = "ap-northeast-2" # Seoul
+  default     = "ap-east-1" # Hong Kong
 }
 
 # Networking
 variable "use_default_vpc" {
   description = "Use default VPC (set to false for custom VPC)"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "acm_certificate_arn" {
@@ -85,7 +85,7 @@ variable "frontend_url" {
 variable "s3_bucket_name" {
   description = "S3 bucket name for document storage"
   type        = string
-  default     = "asiafilings-documents-prod"
+  default     = "pdfs-128638789653"
 }
 
 # Secrets ARNs (from AWS Secrets Manager)

@@ -180,7 +180,7 @@ resource "aws_lambda_function" "extractor" {
   dynamic "vpc_config" {
     for_each = var.lambda_in_vpc ? [1] : []
     content {
-      subnet_ids         = var.subnet_ids
+      subnet_ids         = local.subnet_ids
       security_group_ids = [local.lambda_security_group_id]
     }
   }

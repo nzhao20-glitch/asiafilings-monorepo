@@ -24,7 +24,7 @@ terraform {
   # backend "s3" {
   #   bucket         = "asiafilings-terraform-state"
   #   key            = "foundation/terraform.tfstate"
-  #   region         = "ap-northeast-2"
+  #   region         = "ap-east-1"
   #   encrypt        = true
   #   dynamodb_table = "asiafilings-terraform-lock"
   # }

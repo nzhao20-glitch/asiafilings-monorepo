@@ -46,6 +46,7 @@ Options (default mode):
                       web    -> apps/web-platform
                       lambda -> apps/serverless-functions
                       etl    -> apps/data-pipeline
+                    Shared secrets (/platform/shared/) are always included.
 
   --env <env>       Environment (required)
                       dev    -> development parameters
@@ -70,7 +71,8 @@ Examples:
   $(basename "$0") --type keys --name asiafilings-hk-ec2 --output ~/.ssh/asiafilings.pem
 
 SSM Path Convention:
-  Parameters: /platform/{app}/{env}/{PARAM_NAME}
+  Shared:     /platform/shared/{PARAM_NAME}     (merged into every app pull)
+  App-specific: /platform/{app}/{env}/{PARAM_NAME}
   SSH Keys:   /platform/keys/{KEY_NAME}
 
 Output:
@@ -249,16 +251,35 @@ fi
 
 OUTPUT_FILE="${OUTPUT_DIR}/${ENV_FILENAME}"
 SSM_PATH_WITH_SLASH="${SSM_PATH}/"
+SHARED_SSM_PATH="/platform/shared/"
 
 echo "============================================"
 echo "Pulling secrets from SSM Parameter Store"
-echo "  SSM Path:   ${SSM_PATH_WITH_SLASH}"
+echo "  Shared:     ${SHARED_SSM_PATH}"
+echo "  App:        ${SSM_PATH_WITH_SLASH}"
 echo "  Region:     ${REGION}"
 echo "  Output:     ${OUTPUT_FILE}"
 echo "============================================"
 echo ""
 
-# Fetch all parameters under the path (handles pagination via --recursive)
+# Fetch shared parameters first
+SHARED_JSON=$(aws ssm get-parameters-by-path \
+  --path "${SHARED_SSM_PATH}" \
+  --recursive \
+  --with-decryption \
+  --region "${REGION}" \
+  --output json 2>&1)
+
+if [[ $? -ne 0 ]]; then
+  echo "Warning: Failed to fetch shared parameters from SSM."
+  echo "${SHARED_JSON}"
+  SHARED_JSON='{"Parameters":[]}'
+fi
+
+SHARED_COUNT=$(echo "${SHARED_JSON}" | jq '.Parameters | length')
+echo "Found ${SHARED_COUNT} shared secrets in SSM."
+
+# Fetch app-specific parameters
 PARAMS_JSON=$(aws ssm get-parameters-by-path \
   --path "${SSM_PATH_WITH_SLASH}" \
   --recursive \
@@ -273,14 +294,16 @@ if [[ $? -ne 0 ]]; then
 fi
 
 PARAM_COUNT=$(echo "${PARAMS_JSON}" | jq '.Parameters | length')
+TOTAL_COUNT=$((SHARED_COUNT + PARAM_COUNT))
 
-if [[ "${PARAM_COUNT}" -eq 0 ]]; then
-  echo "Warning: No parameters found at ${SSM_PATH_WITH_SLASH}"
+if [[ "${TOTAL_COUNT}" -eq 0 ]]; then
+  echo "Warning: No parameters found at ${SHARED_SSM_PATH} or ${SSM_PATH_WITH_SLASH}"
   echo "Nothing to write."
   exit 0
 fi
 
-echo "Found ${PARAM_COUNT} secrets in SSM."
+echo "Found ${PARAM_COUNT} app-specific secrets in SSM."
+echo "Total: ${TOTAL_COUNT} secrets."
 echo ""
 
 # ── Write .env File ─────────────────────────────────────────────────────────
@@ -321,16 +344,29 @@ else
   } > "${OUTPUT_FILE}"
 fi
 
-# Append each SSM secret
-echo "${PARAMS_JSON}" | jq -r '.Parameters[] | "\(.Name)=\(.Value)"' | while IFS='=' read -r name value; do
-  KEY="${name##*/}"
-  echo "${KEY}=${value}" >> "${OUTPUT_FILE}"
-done
+# Append shared secrets first
+if [[ "${SHARED_COUNT}" -gt 0 ]]; then
+  echo "# ── Shared secrets (from /platform/shared/) ──" >> "${OUTPUT_FILE}"
+  echo "${SHARED_JSON}" | jq -r '.Parameters[] | "\(.Name)=\(.Value)"' | while IFS='=' read -r name value; do
+    KEY="${name##*/}"
+    echo "${KEY}=${value}" >> "${OUTPUT_FILE}"
+  done
+fi
+
+# Append app-specific secrets (override shared on collision)
+if [[ "${PARAM_COUNT}" -gt 0 ]]; then
+  echo "# ── App secrets (from ${SSM_PATH_WITH_SLASH}) ──" >> "${OUTPUT_FILE}"
+  echo "${PARAMS_JSON}" | jq -r '.Parameters[] | "\(.Name)=\(.Value)"' | while IFS='=' read -r name value; do
+    KEY="${name##*/}"
+    echo "${KEY}=${value}" >> "${OUTPUT_FILE}"
+  done
+fi
 
 echo ""
 echo "Written ${OUTPUT_FILE}:"
 echo "  Config from defaults: ${DEFAULTS_COUNT} values"
-echo "  Secrets from SSM:     ${PARAM_COUNT} values"
+echo "  Shared secrets:       ${SHARED_COUNT} values"
+echo "  App-specific secrets: ${PARAM_COUNT} values"
 echo ""
 echo "============================================"
 echo "Done."
