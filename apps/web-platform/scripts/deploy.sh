@@ -32,7 +32,7 @@ fetch_ssh_key() {
     local tmp_key
     tmp_key=$(mktemp /tmp/deploy-key-XXXXXX.pem)
 
-    log_info "Fetching SSH key from SSM: /platform/keys/${SSH_KEY_NAME}"
+    log_info "Fetching SSH key from SSM: /platform/keys/${SSH_KEY_NAME}" >&2
 
     local key_value
     key_value=$(aws ssm get-parameter \
@@ -46,7 +46,7 @@ fetch_ssh_key() {
         # Fallback: try pull-secrets.sh helper
         local pull_script="${MONOREPO_ROOT}/tools/scripts/pull-secrets.sh"
         if [[ -x "$pull_script" ]]; then
-            log_warn "Direct SSM fetch failed, trying pull-secrets.sh..."
+            log_warn "Direct SSM fetch failed, trying pull-secrets.sh..." >&2
             "$pull_script" --type keys --name "${SSH_KEY_NAME}" --output "$tmp_key" --region "${SSM_REGION}"
             if [[ $? -eq 0 && -f "$tmp_key" ]]; then
                 echo "$tmp_key"
