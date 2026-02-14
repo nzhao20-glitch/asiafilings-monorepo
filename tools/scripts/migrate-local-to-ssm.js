@@ -3,32 +3,23 @@
 /**
  * migrate-local-to-ssm.js
  *
- * Reads .env files from all app directories, parses KEY=VALUE pairs,
- * and generates an upload-secrets.sh script with AWS CLI commands to
- * push each parameter to AWS SSM Parameter Store.
+ * Reads .env files, SSH keys, and terraform.tfvars, then:
+ *   1. Generates upload-secrets.sh — ONLY for truly sensitive values (SSM SecureString)
+ *   2. Generates .env.{env}.defaults files — committed, non-secret config
  *
- * Also handles:
- *   - SSH private keys (.pem) -> SSM SecureString at /platform/keys/{name}
- *   - Terraform .tfvars files -> SSM params at /platform/{app}/{env}/{KEY}
+ * Only values matching SENSITIVE_KEYS patterns go to SSM.
+ * Everything else is written to a .defaults file that can be safely committed.
  *
- * SSM naming convention: /platform/{app_name}/{env}/{KEY}
- *   - web-platform     -> web
- *   - serverless-functions -> lambda
- *   - data-pipeline     -> etl
- *
- * SSH keys: /platform/keys/{key_name}
- *
- * Environment mapping:
- *   - .env.development  -> dev
- *   - .env.production   -> prod
- *   - .env.local        -> dev
- *   - .env              -> dev
+ * SSM naming convention:
+ *   /platform/{app}/{env}/{KEY}    (secrets)
+ *   /platform/keys/{key-name}       (SSH keys)
  *
  * Usage:
  *   node tools/scripts/migrate-local-to-ssm.js
  *
  * Output:
- *   tools/scripts/upload-secrets.sh  (review before executing!)
+ *   tools/scripts/upload-secrets.sh       (gitignored — contains secret values)
+ *   apps/{app}/.env.{env}.defaults        (committed — non-secret config)
  */
 
 const fs = require('fs');
@@ -37,8 +28,6 @@ const path = require('path');
 // ── Configuration ──────────────────────────────────────────────────────────
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-
-// Original source repos (for credentials not yet in monorepo)
 const SOURCE_ROOT = path.resolve(REPO_ROOT, '..');
 
 const APP_DIRS = [
@@ -47,18 +36,17 @@ const APP_DIRS = [
   { dir: 'apps/data-pipeline', ssmName: 'etl' },
 ];
 
-// SSH keys to migrate to SSM (from original source repos)
+const ENV_FILES = ['.env.development', '.env.production', '.env.local', '.env'];
+
+const ENV_MAP = {
+  '.env.development': 'dev',
+  '.env.production': 'prod',
+  '.env.local': 'dev',
+  '.env': 'dev',
+};
+
+// SSH keys to migrate
 const SSH_KEYS = [
-  {
-    path: path.join(SOURCE_ROOT, 'AsiaFilings/LightsailDefaultKey-ap-northeast-2.pem'),
-    ssmName: 'lightsail-ap-northeast-2',
-    description: 'Lightsail SSH key for ap-northeast-2 region',
-  },
-  {
-    path: path.join(SOURCE_ROOT, 'AsiaFilings/LightsailDefaultKey-ap-northeast.pem'),
-    ssmName: 'lightsail-ap-northeast',
-    description: 'Lightsail SSH key for ap-northeast region',
-  },
   {
     path: path.join(SOURCE_ROOT, 'AsiaFilings/infrastructure/ec2/asiafilings-hk-key.pem'),
     ssmName: 'asiafilings-hk-ec2',
@@ -66,7 +54,7 @@ const SSH_KEYS = [
   },
 ];
 
-// Terraform .tfvars files to parse and migrate
+// Terraform .tfvars files — only sensitive keys get pushed
 const TFVARS_FILES = [
   {
     path: path.join(SOURCE_ROOT, 'filing-etl-pipeline/infrastructure/terraform.tfvars'),
@@ -76,46 +64,52 @@ const TFVARS_FILES = [
   },
 ];
 
-const ENV_FILES = [
-  '.env.development',
-  '.env.production',
-  '.env.local',
-  '.env',
-];
+// ── Sensitive Key Detection ────────────────────────────────────────────────
+// A key is sensitive if it matches any of these patterns (case-insensitive).
+// NEXT_PUBLIC_* keys are NEVER sensitive (they're embedded in client-side JS).
 
-const ENV_MAP = {
-  '.env.development': 'dev',
-  '.env.production': 'prod',
-  '.env.local': 'dev',
-  '.env': 'dev',
-};
-
-// Keys containing any of these substrings (case-insensitive) get SecureString
 const SENSITIVE_PATTERNS = [
   'PASSWORD',
   'SECRET',
-  'KEY',
-  'TOKEN',
-  'DSN',
-  'LICENSE',
-  'CREDENTIAL',
   'API_KEY',
+  'ACCESS_KEY',
+  'LICENSE_KEY',
+  'APP_KEY',
+  '_DSN',
+  'CREDENTIAL',
 ];
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// Exact key names that are sensitive despite not matching patterns above
+const SENSITIVE_EXACT = new Set([
+  'DATABASE_URL',         // Contains embedded password in connection string
+  'OPENAI_ORGANIZATION',  // Org-level identifier, treat as secret
+]);
 
-/**
- * Parse a .env file into an array of { key, value } objects.
- * Handles comments, blank lines, and quoted values.
- */
+// Keys that match a pattern but are NOT actually sensitive
+const SENSITIVE_EXCEPTIONS = new Set([
+  'PASSWORD_MIN_LENGTH',      // Config, not a password
+  'CORS_CREDENTIALS',         // Boolean flag, not a credential
+  'COOKIE_HTTPONLY',           // Boolean flag
+  'COOKIE_SECURE',            // Boolean flag
+]);
+
+function isSensitive(key) {
+  if (key.startsWith('NEXT_PUBLIC_')) return false;
+  if (SENSITIVE_EXCEPTIONS.has(key)) return false;
+  if (SENSITIVE_EXACT.has(key)) return true;
+
+  const upper = key.toUpperCase();
+  return SENSITIVE_PATTERNS.some((pattern) => upper.includes(pattern));
+}
+
+// ── Parsers ────────────────────────────────────────────────────────────────
+
 function parseEnvFile(filePath) {
   const content = fs.readFileSync(filePath, 'utf-8');
   const entries = [];
 
   for (const rawLine of content.split('\n')) {
     const line = rawLine.trim();
-
-    // Skip blank lines and comments
     if (!line || line.startsWith('#')) continue;
 
     const eqIdx = line.indexOf('=');
@@ -124,7 +118,6 @@ function parseEnvFile(filePath) {
     const key = line.substring(0, eqIdx).trim();
     let value = line.substring(eqIdx + 1).trim();
 
-    // Strip surrounding quotes (single or double)
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
@@ -132,41 +125,13 @@ function parseEnvFile(filePath) {
       value = value.slice(1, -1);
     }
 
-    // Skip keys that are empty identifiers
     if (!key) continue;
-
     entries.push({ key, value });
   }
 
   return entries;
 }
 
-/**
- * Determine SSM parameter type based on the key name.
- */
-function getParamType(key) {
-  const upper = key.toUpperCase();
-  for (const pattern of SENSITIVE_PATTERNS) {
-    if (upper.includes(pattern)) {
-      return 'SecureString';
-    }
-  }
-  return 'String';
-}
-
-/**
- * Escape a value for safe use inside single-quoted shell strings.
- * Single quotes are replaced with '\'' (end quote, escaped quote, new quote).
- */
-function shellEscape(val) {
-  return val.replace(/'/g, "'\\''");
-}
-
-/**
- * Parse a Terraform .tfvars file into an array of { key, value } objects.
- * Handles HCL-style assignments: key = "value" or key = value
- * Also handles lists: key = ["a", "b"] (stored as JSON string)
- */
 function parseTfvarsFile(filePath) {
   const content = fs.readFileSync(filePath, 'utf-8');
   const entries = [];
@@ -181,7 +146,6 @@ function parseTfvarsFile(filePath) {
     const key = match[1].trim();
     let value = match[2].trim();
 
-    // Strip surrounding quotes
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
@@ -189,7 +153,6 @@ function parseTfvarsFile(filePath) {
       value = value.slice(1, -1);
     }
 
-    // Keep lists/arrays as-is (they'll be stored as JSON strings)
     if (!key) continue;
     entries.push({ key, value });
   }
@@ -197,16 +160,22 @@ function parseTfvarsFile(filePath) {
   return entries;
 }
 
+function shellEscape(val) {
+  return val.replace(/'/g, "'\\''");
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 function main() {
   const commands = [];
-  let totalParams = 0;
+  let totalSecrets = 0;
+  let totalDefaults = 0;
   const summary = [];
+
+  // ── Process .env files ─────────────────────────────────────────────────
 
   for (const app of APP_DIRS) {
     const appPath = path.join(REPO_ROOT, app.dir);
-
     if (!fs.existsSync(appPath)) {
       console.log(`[SKIP] Directory not found: ${app.dir}`);
       continue;
@@ -214,49 +183,70 @@ function main() {
 
     for (const envFile of ENV_FILES) {
       const envPath = path.join(appPath, envFile);
-
       if (!fs.existsSync(envPath)) continue;
 
       const env = ENV_MAP[envFile];
       const entries = parseEnvFile(envPath);
-
       if (entries.length === 0) continue;
 
-      const secureCount = entries.filter(e => getParamType(e.key) === 'SecureString').length;
-      const plainCount = entries.length - secureCount;
+      const secrets = entries.filter((e) => isSensitive(e.key));
+      const defaults = entries.filter((e) => !isSensitive(e.key));
 
-      summary.push(
-        `#   ${app.dir}/${envFile} -> /platform/${app.ssmName}/${env}/ (${entries.length} params: ${secureCount} SecureString, ${plainCount} String)`
-      );
-
-      commands.push('');
-      commands.push(`# ── ${app.dir}/${envFile} -> /platform/${app.ssmName}/${env}/ ──`);
-      commands.push('');
-
-      for (const { key, value } of entries) {
-        const paramType = getParamType(key);
-        const ssmPath = `/platform/${app.ssmName}/${env}/${key}`;
-
-        commands.push(
-          `aws ssm put-parameter \\`,
-          `  --name '${ssmPath}' \\`,
-          `  --value '${shellEscape(value)}' \\`,
-          `  --type ${paramType} \\`,
-          `  --overwrite \\`,
-          `  --region "\${AWS_REGION:-us-east-2}" \\`,
-          `  && echo "  [OK] ${ssmPath}" \\`,
-          `  || echo "  [FAIL] ${ssmPath}"`,
-          ''
+      // Generate SSM commands for secrets only
+      if (secrets.length > 0) {
+        summary.push(
+          `#   ${app.dir}/${envFile} -> /platform/${app.ssmName}/${env}/ (${secrets.length} secrets)`
         );
 
-        totalParams++;
+        commands.push('');
+        commands.push(
+          `# ── ${app.dir}/${envFile} -> /platform/${app.ssmName}/${env}/ (${secrets.length} secrets) ──`
+        );
+        commands.push('');
+
+        for (const { key, value } of secrets) {
+          const ssmPath = `/platform/${app.ssmName}/${env}/${key}`;
+          commands.push(
+            `aws ssm put-parameter \\`,
+            `  --name '${ssmPath}' \\`,
+            `  --value '${shellEscape(value)}' \\`,
+            `  --type SecureString \\`,
+            `  --overwrite \\`,
+            `  --region "\${AWS_REGION:-ap-east-1}" \\`,
+            `  && echo "  [OK] ${ssmPath}" \\`,
+            `  || echo "  [FAIL] ${ssmPath}"`,
+            ''
+          );
+          totalSecrets++;
+        }
+      }
+
+      // Write .defaults file for non-secret config
+      if (defaults.length > 0) {
+        const defaultsSuffix = envFile === '.env' ? '.env.defaults' : `${envFile}.defaults`;
+        const defaultsPath = path.join(appPath, defaultsSuffix);
+
+        const defaultsContent = [
+          `# ${defaultsSuffix}`,
+          `# Non-secret configuration — safe to commit to git.`,
+          `# Secrets are stored in AWS SSM at /platform/${app.ssmName}/${env}/`,
+          `# Run: ./tools/scripts/pull-secrets.sh --app ${app.ssmName} --env ${env}`,
+          `# Generated: ${new Date().toISOString()}`,
+          '',
+          ...defaults.map(({ key, value }) => `${key}=${value}`),
+          '',
+        ].join('\n');
+
+        fs.writeFileSync(defaultsPath, defaultsContent);
+        console.log(`[DEFAULTS] ${app.dir}/${defaultsSuffix} (${defaults.length} config values)`);
+        totalDefaults += defaults.length;
       }
     }
   }
 
-  // ── SSH Keys ──────────────────────────────────────────────────────────────
+  // ── SSH Keys ───────────────────────────────────────────────────────────
 
-  const sshKeysFound = SSH_KEYS.filter(k => fs.existsSync(k.path));
+  const sshKeysFound = SSH_KEYS.filter((k) => fs.existsSync(k.path));
 
   if (sshKeysFound.length > 0) {
     commands.push('');
@@ -271,7 +261,6 @@ function main() {
       const keyContent = fs.readFileSync(keyDef.path, 'utf-8').trim();
       const ssmPath = `/platform/keys/${keyDef.ssmName}`;
 
-      // Use a heredoc for multi-line PEM content
       commands.push(
         `# ${keyDef.description}`,
         `aws ssm put-parameter \\`,
@@ -287,12 +276,11 @@ function main() {
         `  || echo "  [FAIL] ${ssmPath}"`,
         ''
       );
-
-      totalParams++;
+      totalSecrets++;
     }
   }
 
-  // ── Terraform .tfvars ────────────────────────────────────────────────────
+  // ── Terraform .tfvars (sensitive keys only) ────────────────────────────
 
   for (const tfDef of TFVARS_FILES) {
     if (!fs.existsSync(tfDef.path)) {
@@ -301,42 +289,44 @@ function main() {
     }
 
     const entries = parseTfvarsFile(tfDef.path);
-    if (entries.length === 0) continue;
+    const secrets = entries.filter((e) => isSensitive(e.key));
+
+    if (secrets.length === 0) continue;
 
     summary.push(
-      `#   ${path.basename(tfDef.path)} -> /platform/${tfDef.ssmName}/${tfDef.env}/ (${entries.length} terraform vars)`
+      `#   terraform.tfvars -> /platform/${tfDef.ssmName}/${tfDef.env}/ (${secrets.length} secrets)`
     );
 
     commands.push('');
-    commands.push(`# ── Terraform: ${path.basename(tfDef.path)} -> /platform/${tfDef.ssmName}/${tfDef.env}/ ──`);
+    commands.push(
+      `# ── Terraform: terraform.tfvars -> /platform/${tfDef.ssmName}/${tfDef.env}/ (${secrets.length} secrets) ──`
+    );
     commands.push('');
 
-    for (const { key, value } of entries) {
-      const paramType = getParamType(key);
+    for (const { key, value } of secrets) {
       const ssmPath = `/platform/${tfDef.ssmName}/${tfDef.env}/${key}`;
-
       commands.push(
         `aws ssm put-parameter \\`,
         `  --name '${ssmPath}' \\`,
         `  --value '${shellEscape(value)}' \\`,
-        `  --type ${paramType} \\`,
+        `  --type SecureString \\`,
         `  --overwrite \\`,
         `  --region "\${AWS_REGION:-ap-east-1}" \\`,
         `  && echo "  [OK] ${ssmPath}" \\`,
         `  || echo "  [FAIL] ${ssmPath}"`,
         ''
       );
-
-      totalParams++;
+      totalSecrets++;
     }
   }
 
-  if (totalParams === 0) {
-    console.log('No .env files, SSH keys, or tfvars found. Nothing to generate.');
+  if (totalSecrets === 0) {
+    console.log('No secrets found. Nothing to generate.');
     process.exit(0);
   }
 
-  // Build the output script
+  // ── Generate upload-secrets.sh ─────────────────────────────────────────
+
   const outputPath = path.join(__dirname, 'upload-secrets.sh');
 
   const header = [
@@ -347,24 +337,24 @@ function main() {
     '# Generated by migrate-local-to-ssm.js',
     `# Generated at: ${new Date().toISOString()}`,
     '#',
-    '# This script uploads local .env parameters to AWS SSM Parameter Store.',
-    '# SSM path convention: /platform/{app_name}/{env}/{KEY}',
+    '# This script uploads ONLY sensitive values to AWS SSM Parameter Store.',
+    '# Non-secret config is stored in committed .env.*.defaults files.',
     '#',
     '# IMPORTANT: Review this script carefully before running!',
     '#   - Ensure your AWS CLI is configured with appropriate credentials',
     '#   - Ensure you are targeting the correct AWS account and region',
-    '#   - SecureString parameters will be encrypted with the default AWS KMS key',
+    '#   - All parameters use SecureString (KMS encrypted)',
     '#',
-    '# Source files processed:',
+    '# Secrets processed:',
     ...summary,
-    `# Total parameters: ${totalParams}`,
+    `# Total secrets: ${totalSecrets}`,
     '# ============================================================================',
     '',
     'set -euo pipefail',
     '',
     'echo "============================================"',
-    `echo "Uploading ${totalParams} parameters to SSM..."`,
-    'echo "Region: ${AWS_REGION:-us-east-2}"',
+    `echo "Uploading ${totalSecrets} secrets to SSM..."`,
+    'echo "Region: ${AWS_REGION:-ap-east-1}"',
     'echo "============================================"',
     'echo ""',
   ];
@@ -373,16 +363,17 @@ function main() {
     '',
     'echo ""',
     'echo "============================================"',
-    'echo "Upload complete."',
+    `echo "Upload complete. ${totalSecrets} secrets pushed."`,
+    `echo "Non-secret config is in .env.*.defaults files (${totalDefaults} values, committed to git)."`,
     'echo "============================================"',
   ];
 
   const fullScript = [...header, ...commands, ...footer].join('\n') + '\n';
-
   fs.writeFileSync(outputPath, fullScript, { mode: 0o755 });
 
   console.log(`\n[SUCCESS] Generated: ${outputPath}`);
-  console.log(`  Total parameters: ${totalParams}`);
+  console.log(`  Secrets for SSM: ${totalSecrets}`);
+  console.log(`  Config in .defaults files: ${totalDefaults}`);
   console.log(`\nReview the script, then run:`);
   console.log(`  bash ${outputPath}`);
 }

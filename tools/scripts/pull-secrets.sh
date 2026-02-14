@@ -280,31 +280,57 @@ if [[ "${PARAM_COUNT}" -eq 0 ]]; then
   exit 0
 fi
 
-echo "Found ${PARAM_COUNT} parameters."
+echo "Found ${PARAM_COUNT} secrets in SSM."
 echo ""
 
 # ── Write .env File ─────────────────────────────────────────────────────────
 
-# Build the .env file content
-{
-  echo "# ============================================"
-  echo "# Auto-generated from AWS SSM Parameter Store"
-  echo "# Source: ${SSM_PATH_WITH_SLASH}"
-  echo "# Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  echo "# Region: ${REGION}"
-  echo "# ============================================"
-  echo ""
-} > "${OUTPUT_FILE}"
+# Check for a .defaults file (committed non-secret config)
+DEFAULTS_FILE="${OUTPUT_DIR}/${ENV_FILENAME}.defaults"
 
-# Extract each parameter: strip the SSM path prefix to get the key name
+if [[ -f "${DEFAULTS_FILE}" ]]; then
+  echo "Found defaults file: ${DEFAULTS_FILE}"
+  DEFAULTS_COUNT=$(grep -cvE '^\s*$|^\s*#' "${DEFAULTS_FILE}" 2>/dev/null || echo "0")
+
+  # Start with defaults, then append secrets
+  {
+    echo "# ============================================"
+    echo "# Generated from .defaults + AWS SSM secrets"
+    echo "# Defaults: ${DEFAULTS_FILE}"
+    echo "# Secrets:  ${SSM_PATH_WITH_SLASH}"
+    echo "# Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    echo "# Region: ${REGION}"
+    echo "# ============================================"
+    echo ""
+    # Copy non-secret config values (skip comments and blank lines)
+    grep -vE '^\s*$|^\s*#' "${DEFAULTS_FILE}" || true
+    echo ""
+    echo "# ── Secrets (from SSM) ──"
+  } > "${OUTPUT_FILE}"
+else
+  echo "No defaults file found, writing secrets only."
+  DEFAULTS_COUNT=0
+  {
+    echo "# ============================================"
+    echo "# Auto-generated from AWS SSM Parameter Store"
+    echo "# Source: ${SSM_PATH_WITH_SLASH}"
+    echo "# Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    echo "# Region: ${REGION}"
+    echo "# ============================================"
+    echo ""
+  } > "${OUTPUT_FILE}"
+fi
+
+# Append each SSM secret
 echo "${PARAMS_JSON}" | jq -r '.Parameters[] | "\(.Name)=\(.Value)"' | while IFS='=' read -r name value; do
-  # Strip the path prefix to get the KEY name
-  # e.g., /platform/web/dev/DATABASE_URL -> DATABASE_URL
   KEY="${name##*/}"
   echo "${KEY}=${value}" >> "${OUTPUT_FILE}"
 done
 
-echo "Written ${PARAM_COUNT} parameters to ${OUTPUT_FILE}"
+echo ""
+echo "Written ${OUTPUT_FILE}:"
+echo "  Config from defaults: ${DEFAULTS_COUNT} values"
+echo "  Secrets from SSM:     ${PARAM_COUNT} values"
 echo ""
 echo "============================================"
 echo "Done."
