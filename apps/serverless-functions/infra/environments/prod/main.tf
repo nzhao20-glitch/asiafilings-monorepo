@@ -43,25 +43,16 @@ data "aws_ssm_parameter" "s3_pdf_bucket" {
   name = "/platform/core/${var.environment}/s3_pdf_bucket"
 }
 
-data "aws_ssm_parameter" "s3_extraction_bucket" {
-  name = "/platform/core/${var.environment}/s3_extraction_bucket"
-}
-
 locals {
-  vpc_id                = var.vpc_id != "" ? var.vpc_id : data.aws_ssm_parameter.vpc_id.value
-  subnet_ids            = var.subnet_ids != null ? var.subnet_ids : split(",", data.aws_ssm_parameter.subnet_ids.value)
-  rds_security_group_id = var.rds_security_group_id != "" ? var.rds_security_group_id : data.aws_ssm_parameter.rds_security_group_id.value
-  pdf_bucket_name       = var.pdf_bucket != "" ? var.pdf_bucket : data.aws_ssm_parameter.s3_pdf_bucket.value
-  extraction_bucket_name = var.extraction_bucket != "" ? var.extraction_bucket : data.aws_ssm_parameter.s3_extraction_bucket.value
+  vpc_id                 = var.vpc_id != "" ? var.vpc_id : data.aws_ssm_parameter.vpc_id.value
+  subnet_ids             = var.subnet_ids != null ? var.subnet_ids : split(",", data.aws_ssm_parameter.subnet_ids.value)
+  rds_security_group_id  = var.rds_security_group_id != "" ? var.rds_security_group_id : data.aws_ssm_parameter.rds_security_group_id.value
+  pdf_bucket_name        = var.pdf_bucket != "" ? var.pdf_bucket : data.aws_ssm_parameter.s3_pdf_bucket.value
 }
 
 # Reference existing S3 buckets (shared with filing-etl-pipeline)
 data "aws_s3_bucket" "pdfs" {
   bucket = local.pdf_bucket_name
-}
-
-data "aws_s3_bucket" "extractions" {
-  bucket = local.extraction_bucket_name
 }
 
 # SQS Queue for download jobs

@@ -1,4 +1,15 @@
 # EventBridge Rule for Daily HKEX Workflow Trigger
+#
+# Triggers the Step Functions state machine every day at 6 PM HKT (10 AM UTC).
+# The input payload is empty so the scraper Lambda defaults to the last 24 hours.
+#
+# -----------------------------------------------------------------------
+# Manual backfill via AWS CLI (bypasses EventBridge):
+#
+#   aws stepfunctions start-execution \
+#     --state-machine-arn "<STATE_MACHINE_ARN>" \
+#     --input '{"start_date":"2024-01-01","end_date":"2024-01-31","market":"SEHK"}'
+# -----------------------------------------------------------------------
 
 variable "name_prefix" {
   description = "Prefix for resource names"
@@ -11,21 +22,15 @@ variable "state_machine_arn" {
 }
 
 variable "schedule_expression" {
-  description = "Schedule expression for the rule (default: 9 AM HKT = 1 AM UTC)"
+  description = "Schedule expression for the rule (default: 6 PM HKT = 10 AM UTC)"
   type        = string
-  default     = "cron(0 1 * * ? *)" # 1 AM UTC = 9 AM HKT
+  default     = "cron(0 10 * * ? *)" # 10 AM UTC = 6 PM HKT (UTC+8)
 }
 
 variable "enabled" {
   description = "Whether the schedule is enabled"
   type        = bool
   default     = true
-}
-
-variable "max_pages" {
-  description = "Max pages to scrape (passed to state machine)"
-  type        = number
-  default     = 10
 }
 
 variable "tags" {
@@ -71,7 +76,7 @@ resource "aws_iam_role_policy" "eventbridge_sfn" {
 # EventBridge Rule
 resource "aws_cloudwatch_event_rule" "daily_workflow" {
   name                = "${var.name_prefix}-daily-schedule"
-  description         = "Trigger HKEX scraping workflow daily at 9 AM HKT"
+  description         = "Trigger HKEX scraping workflow daily at 6 PM HKT (10 AM UTC)"
   schedule_expression = var.schedule_expression
   state               = var.enabled ? "ENABLED" : "DISABLED"
 
@@ -79,16 +84,14 @@ resource "aws_cloudwatch_event_rule" "daily_workflow" {
 }
 
 # EventBridge Target (Step Functions)
+# Empty input object — the scraper Lambda defaults to querying the last 24 hours.
 resource "aws_cloudwatch_event_target" "step_functions" {
   rule      = aws_cloudwatch_event_rule.daily_workflow.name
   target_id = "TriggerHKEXWorkflow"
   arn       = var.state_machine_arn
   role_arn  = aws_iam_role.eventbridge.arn
 
-  input = jsonencode({
-    max_pages = var.max_pages
-    waitCount = 0 # Initialize wait counter for polling loop
-  })
+  input = jsonencode({})
 }
 
 output "rule_arn" {

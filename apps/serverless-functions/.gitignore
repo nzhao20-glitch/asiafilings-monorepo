@@ -61,19 +61,6 @@ scripts/*.zip
 bin/
 *.zip
 
-# Test data
-lambda/extractor/*_extraction.json
-lambda/extractor/*_search.json
-lambda/extractor/*_rds_pages.json
-
-# Python packages (installed via pip)
-lambda/extractor/package/
-
-# Python virtual environments
-venv/
-.venv/
-lambda/extractor/venv/
-
 # Local extraction output
 extractions/
-lambda/extractor/extractions/
+services/downloader/cmd/batch-worker/batch-worker

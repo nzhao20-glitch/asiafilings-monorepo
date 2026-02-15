@@ -6,9 +6,8 @@ project_name = "hkex-downloader"
 environment  = "prod"
 
 # S3 buckets (shared with filing-etl-pipeline, defaults usually work)
-# pdf_bucket        = "pdfs-128638789653"
-# extraction_bucket = "filing-extractions-128638789653"
-# s3_prefix         = "hkex/"
+# pdf_bucket = "pdfs-128638789653"
+# s3_prefix  = "hkex/"
 
 # PostgreSQL connection string
 # Format: postgres://user:password@host:port/database

@@ -15,10 +15,12 @@
       "outputs": [
         "{projectRoot}/services/scraper/cmd/scraper-lambda/scraper-lambda.zip",
         "{projectRoot}/services/downloader/cmd/downloader-lambda/downloader-lambda.zip",
+        "{projectRoot}/services/downloader/cmd/sfn-downloader/sfn-downloader.zip",
         "{projectRoot}/services/orchestrator/cmd/check-status/check-status.zip",
         "{projectRoot}/services/orchestrator/cmd/download-trigger/download-trigger.zip",
-        "{projectRoot}/services/orchestrator/cmd/extraction-trigger/extraction-trigger.zip",
-        "{projectRoot}/services/orchestrator/cmd/notify/notify.zip"
+        "{projectRoot}/services/orchestrator/cmd/notify/notify.zip",
+        "{projectRoot}/services/orchestrator/cmd/write-manifest/write-manifest.zip",
+        "{projectRoot}/services/orchestrator/cmd/generate-chunks/generate-chunks.zip"
       ]
     },
     "test": {

@@ -62,50 +62,6 @@ outputs:
 	terraform output
 
 # =============================================================================
-# Extraction Lambda (Python)
-# =============================================================================
-
-# Package extraction Lambda
-package-extractor:
-	cd ../../lambda/extractor && zip -r ../../deployments/terraform/extractor.zip *.py
-
-# Build PyMuPDF Lambda layer
-build-layer:
-	../../scripts/build_layer.sh
-
-# Build and publish layer to AWS
-publish-layer:
-	../../scripts/build_layer.sh --publish
-
-# Deploy extraction Lambda only
-deploy-extractor: package-extractor
-	terraform apply -target=aws_lambda_function.extractor -auto-approve
-
-# Update extraction Lambda code
-update-extractor: package-extractor
-	aws lambda update-function-code \
-		--function-name $$(terraform output -raw extraction_lambda_name) \
-		--zip-file fileb://extractor.zip
-
-# Show extraction queue status
-extraction-queue-status:
-	@echo "Extraction queue messages:"
-	@aws sqs get-queue-attributes \
-		--queue-url $$(terraform output -raw extraction_queue_url) \
-		--attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible
-
-# Show extraction DLQ status
-extraction-dlq-status:
-	@echo "Extraction dead letter queue messages:"
-	@aws sqs get-queue-attributes \
-		--queue-url $$(terraform output -raw extraction_dlq_url) \
-		--attribute-names ApproximateNumberOfMessages
-
-# View extraction Lambda logs
-extraction-logs:
-	aws logs tail /aws/lambda/$$(terraform output -raw extraction_lambda_name) --follow
-
-# =============================================================================
 # Meilisearch Indexer Lambda (Python)
 # =============================================================================
 
@@ -136,4 +92,4 @@ indexer-logs:
 
 # Clean all artifacts
 clean-all: clean
-	rm -f extractor.zip meilisearch-indexer.zip pymupdf-psycopg2-layer.zip
+	rm -f meilisearch-indexer.zip

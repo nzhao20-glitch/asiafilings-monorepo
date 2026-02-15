@@ -1,0 +1,17 @@
+# Terraform
+infra/
+.terraform/
+
+# Build artifacts
+bin/
+*.zip
+bootstrap
+
+# Dev files
+*.db
+downloads/
+.env*
+tools/
+
+# Git
+.git/

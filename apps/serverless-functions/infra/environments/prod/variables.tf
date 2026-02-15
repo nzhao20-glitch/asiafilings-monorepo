@@ -22,12 +22,6 @@ variable "pdf_bucket" {
   default     = ""
 }
 
-variable "extraction_bucket" {
-  description = "S3 bucket for extraction results (leave empty to resolve from SSM)"
-  type        = string
-  default     = ""
-}
-
 variable "s3_prefix" {
   description = "S3 prefix for HKEX documents"
   type        = string
@@ -104,4 +98,48 @@ variable "max_concurrent_lambdas" {
   description = "Maximum concurrent Lambda executions (limits parallel downloads to avoid HKEX rate limiting). Set to -1 to use account default (no reservation). Note: AWS requires at least 10 unreserved in account."
   type        = number
   default     = -1
+}
+
+# -----------------------------------------------------------------------------
+# Orchestration / Step Functions variables
+# -----------------------------------------------------------------------------
+
+variable "notification_email" {
+  description = "Email address for SNS workflow notifications (leave empty to skip subscription)"
+  type        = string
+  default     = ""
+}
+
+variable "download_max_concurrency" {
+  description = "Max concurrent download Lambdas in the Step Functions Map state (protects HKEX rate limits)"
+  type        = number
+  default     = 10
+}
+
+variable "schedule_enabled" {
+  description = "Whether the daily EventBridge schedule is enabled"
+  type        = bool
+  default     = true
+}
+
+# -----------------------------------------------------------------------------
+# Batch / large download variables
+# -----------------------------------------------------------------------------
+
+variable "batch_ecr_image_uri" {
+  description = "ECR image URI for batch download worker"
+  type        = string
+  default     = ""
+}
+
+variable "batch_chunk_size" {
+  description = "Number of filings per Batch array job element"
+  type        = number
+  default     = 500
+}
+
+variable "batch_filing_threshold" {
+  description = "Filing count above which Batch path is used instead of Lambda Map"
+  type        = number
+  default     = 1000
 }

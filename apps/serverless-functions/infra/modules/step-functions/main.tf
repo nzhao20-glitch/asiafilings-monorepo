@@ -1,4 +1,31 @@
-# Step Functions State Machine for HKEX Daily Workflow
+# Step Functions State Machine for HKEX Filing Ingestion Workflow
+#
+# Two execution paths:
+#
+#   Daily (no start_date):
+#     Scrape → CheckNewFilings → RouteBySize →
+#       ≤1000: Map(DownloadFilings) → NotifySuccess
+#       >1000: WriteManifest → BatchDownload → NotifySuccess
+#
+#   Backfill (start_date + end_date provided):
+#     GenerateChunks → BackfillMonths Map(MaxConcurrency=1):
+#       ScrapeMonth → CheckMonthFilings →
+#         Has filings: WriteMonthManifest → BatchDownloadMonth → MonthDone
+#         No filings:  MonthNoFilings
+#     → NotifyBackfillSuccess
+#
+# Backfill always uses Batch (avoids nested Map 25k event limit).
+# Each month's errors are isolated via Catch → MonthFailed.
+#
+# -----------------------------------------------------------------------
+# Manual backfill via AWS CLI:
+#
+#   aws stepfunctions start-execution \
+#     --state-machine-arn "<STATE_MACHINE_ARN>" \
+#     --input '{"start_date":"2024-01-01","end_date":"2024-06-30","market":"SEHK"}'
+#
+# Omit start_date/end_date for the default last-24-hours daily behavior.
+# -----------------------------------------------------------------------
 
 variable "name_prefix" {
   description = "Prefix for resource names"
@@ -10,23 +37,45 @@ variable "scraper_lambda_arn" {
   type        = string
 }
 
-variable "check_status_lambda_arn" {
-  description = "ARN of the check-status Lambda"
-  type        = string
-}
-
-variable "download_trigger_lambda_arn" {
-  description = "ARN of the download-trigger Lambda"
-  type        = string
-}
-
-variable "extraction_trigger_lambda_arn" {
-  description = "ARN of the extraction-trigger Lambda"
+variable "sfn_downloader_lambda_arn" {
+  description = "ARN of the Step Functions downloader Lambda (single-filing handler)"
   type        = string
 }
 
 variable "notify_lambda_arn" {
   description = "ARN of the notify Lambda"
+  type        = string
+}
+
+variable "download_max_concurrency" {
+  description = "Max concurrent download Lambda invocations in the Map state (protects HKEX rate limits)"
+  type        = number
+  default     = 10
+}
+
+variable "write_manifest_lambda_arn" {
+  description = "ARN of the write-manifest Lambda"
+  type        = string
+}
+
+variable "batch_job_queue_arn" {
+  description = "ARN of the Batch job queue for large downloads"
+  type        = string
+}
+
+variable "batch_job_definition_arn" {
+  description = "ARN of the Batch job definition for downloads"
+  type        = string
+}
+
+variable "batch_filing_threshold" {
+  description = "Filing count threshold above which Batch is used instead of Map"
+  type        = number
+  default     = 1000
+}
+
+variable "generate_chunks_lambda_arn" {
+  description = "ARN of the generate-chunks Lambda (backfill date range splitter)"
   type        = string
 }
 
@@ -67,12 +116,41 @@ resource "aws_iam_role_policy" "step_functions_lambda" {
       ]
       Resource = [
         var.scraper_lambda_arn,
-        var.check_status_lambda_arn,
-        var.download_trigger_lambda_arn,
-        var.extraction_trigger_lambda_arn,
-        var.notify_lambda_arn
+        var.sfn_downloader_lambda_arn,
+        var.notify_lambda_arn,
+        var.write_manifest_lambda_arn,
+        var.generate_chunks_lambda_arn
       ]
     }]
+  })
+}
+
+resource "aws_iam_role_policy" "step_functions_batch" {
+  name = "${var.name_prefix}-batch-access"
+  role = aws_iam_role.step_functions.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "batch:SubmitJob",
+          "batch:DescribeJobs",
+          "batch:TerminateJob"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "events:PutTargets",
+          "events:PutRule",
+          "events:DescribeRule"
+        ]
+        Resource = "*"
+      }
+    ]
   })
 }
 
@@ -82,25 +160,222 @@ resource "aws_sfn_state_machine" "hkex_workflow" {
   role_arn = aws_iam_role.step_functions.arn
 
   definition = jsonencode({
-    Comment = "HKEX Daily Scraping and Processing Workflow"
-    StartAt = "Scrape"
+    Comment = "HKEX Filing Ingestion Workflow — Daily (Scrape → Download) or Backfill (monthly chunks via Map → Batch)"
+    StartAt = "IsBackfill"
     States = {
-      # Step 1: Run the scraper to fetch new announcements
+
+      # ---------------------------------------------------------------
+      # Entry point: route daily runs vs. backfills.
+      # Backfills provide start_date; daily runs omit it.
+      # ---------------------------------------------------------------
+      IsBackfill = {
+        Type = "Choice"
+        Choices = [{
+          Variable  = "$.start_date"
+          IsPresent = true
+          Next      = "GenerateChunks"
+        }]
+        Default = "Scrape"
+      }
+
+      # ===============================================================
+      # BACKFILL PATH
+      # ===============================================================
+
+      # Split the date range into monthly chunks
+      GenerateChunks = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = var.generate_chunks_lambda_arn
+          "Payload.$"  = "$"
+        }
+        ResultPath = "$.chunksResult"
+        ResultSelector = {
+          "chunks.$" = "$.Payload.chunks"
+        }
+        Next = "BackfillMonths"
+        Catch = [{
+          ErrorEquals = ["States.ALL"]
+          Next        = "NotifyFailure"
+          ResultPath  = "$.error"
+        }]
+      }
+
+      # Iterate over monthly chunks sequentially (MaxConcurrency=1)
+      BackfillMonths = {
+        Type           = "Map"
+        ItemsPath      = "$.chunksResult.chunks"
+        MaxConcurrency = 1
+        ItemProcessor = {
+          ProcessorConfig = {
+            Mode = "INLINE"
+          }
+          StartAt = "ScrapeMonth"
+          States = {
+
+            ScrapeMonth = {
+              Type     = "Task"
+              Resource = "arn:aws:states:::lambda:invoke"
+              Parameters = {
+                FunctionName = var.scraper_lambda_arn
+                "Payload.$"  = "$"
+              }
+              ResultPath = "$.scraperResult"
+              ResultSelector = {
+                "total_announcements.$" = "$.Payload.total_announcements"
+                "new_filings.$"         = "$.Payload.new_filings"
+                "updated_filings.$"     = "$.Payload.updated_filings"
+                "filings.$"             = "$.Payload.filings"
+                "errors.$"              = "$.Payload.errors"
+              }
+              Next = "CheckMonthFilings"
+              Catch = [{
+                ErrorEquals = ["States.ALL"]
+                Next        = "MonthFailed"
+                ResultPath  = "$.error"
+              }]
+            }
+
+            CheckMonthFilings = {
+              Type = "Choice"
+              Choices = [{
+                Variable           = "$.scraperResult.new_filings"
+                NumericGreaterThan = 0
+                Next               = "WriteMonthManifest"
+              }]
+              Default = "MonthNoFilings"
+            }
+
+            WriteMonthManifest = {
+              Type     = "Task"
+              Resource = "arn:aws:states:::lambda:invoke"
+              Parameters = {
+                FunctionName = var.write_manifest_lambda_arn
+                Payload = {
+                  "filings.$" = "$.scraperResult.filings"
+                }
+              }
+              ResultPath = "$.manifestResult"
+              ResultSelector = {
+                "manifest_bucket.$" = "$.Payload.manifest_bucket"
+                "manifest_key.$"    = "$.Payload.manifest_key"
+                "array_size.$"      = "$.Payload.array_size"
+                "total_filings.$"   = "$.Payload.total_filings"
+                "chunk_size.$"      = "$.Payload.chunk_size"
+              }
+              Next = "BatchDownloadMonth"
+              Catch = [{
+                ErrorEquals = ["States.ALL"]
+                Next        = "MonthFailed"
+                ResultPath  = "$.error"
+              }]
+            }
+
+            BatchDownloadMonth = {
+              Type     = "Task"
+              Resource = "arn:aws:states:::batch:submitJob.sync"
+              Parameters = {
+                JobName         = "backfill-download"
+                "JobQueue"      = var.batch_job_queue_arn
+                "JobDefinition" = var.batch_job_definition_arn
+                "ArrayProperties" = {
+                  "Size.$" = "$.manifestResult.array_size"
+                }
+                "ContainerOverrides" = {
+                  "Environment" = [
+                    { "Name" = "MANIFEST_BUCKET", "Value.$" = "$.manifestResult.manifest_bucket" },
+                    { "Name" = "MANIFEST_KEY", "Value.$" = "$.manifestResult.manifest_key" }
+                  ]
+                }
+              }
+              ResultPath = "$.batchResult"
+              Next       = "MonthDone"
+              Retry = [{
+                ErrorEquals     = ["States.TaskFailed"]
+                IntervalSeconds = 60
+                MaxAttempts     = 3
+                BackoffRate     = 2.0
+              }]
+              Catch = [{
+                ErrorEquals = ["States.ALL"]
+                Next        = "MonthFailed"
+                ResultPath  = "$.error"
+              }]
+            }
+
+            MonthDone = {
+              Type = "Pass"
+              Parameters = {
+                "month.$"      = "$.start_date"
+                "new_filings.$" = "$.scraperResult.new_filings"
+                status          = "completed"
+              }
+              End = true
+            }
+
+            MonthNoFilings = {
+              Type = "Pass"
+              Parameters = {
+                "month.$"   = "$.start_date"
+                new_filings = 0
+                status      = "skipped"
+              }
+              End = true
+            }
+
+            MonthFailed = {
+              Type = "Pass"
+              Parameters = {
+                "month.$"   = "$.start_date"
+                new_filings = 0
+                status      = "failed"
+                "error.$"   = "$.error"
+              }
+              End = true
+            }
+          }
+        }
+        ResultPath = "$.backfillResults"
+        Next       = "NotifyBackfillSuccess"
+      }
+
+      NotifyBackfillSuccess = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = var.notify_lambda_arn
+          Payload = {
+            status  = "SUCCESS"
+            message = "Backfill completed"
+            "months_processed.$" = "$.backfillResults"
+          }
+        }
+        End = true
+      }
+
+      # ===============================================================
+      # DAILY PATH (unchanged)
+      # ===============================================================
+
+      # ---------------------------------------------------------------
+      # Step 1: Run the scraper to discover new filings in a date range.
+      # Input is passed through from EventBridge or manual invocation.
+      # Daily runs omit dates (defaults to last 24 h inside the Lambda).
+      # ---------------------------------------------------------------
       Scrape = {
         Type     = "Task"
         Resource = "arn:aws:states:::lambda:invoke"
         Parameters = {
           FunctionName = var.scraper_lambda_arn
-          Payload = {
-            "max_pages.$" = "$.max_pages"
-          }
+          "Payload.$"  = "$"
         }
         ResultPath = "$.scraperResult"
         ResultSelector = {
           "total_announcements.$" = "$.Payload.total_announcements"
           "new_filings.$"         = "$.Payload.new_filings"
           "updated_filings.$"     = "$.Payload.updated_filings"
-          "filing_ids.$"          = "$.Payload.filing_ids"
+          "filings.$"             = "$.Payload.filings"
           "errors.$"              = "$.Payload.errors"
         }
         Next = "CheckNewFilings"
@@ -111,115 +386,54 @@ resource "aws_sfn_state_machine" "hkex_workflow" {
         }]
       }
 
-      # Step 2: Check if there are new filings to process
+      # ---------------------------------------------------------------
+      # Step 2: Branch — skip downloads if the scraper found nothing new.
+      # ---------------------------------------------------------------
       CheckNewFilings = {
         Type = "Choice"
         Choices = [{
           Variable           = "$.scraperResult.new_filings"
           NumericGreaterThan = 0
-          Next               = "TriggerDownloads"
+          Next               = "RouteBySize"
         }]
         Default = "NotifyNoNewFilings"
       }
 
-      # Step 3: Trigger downloads for new filings
-      TriggerDownloads = {
-        Type     = "Task"
-        Resource = "arn:aws:states:::lambda:invoke"
-        Parameters = {
-          FunctionName = var.download_trigger_lambda_arn
-          Payload = {
-            "filing_ids.$" = "$.scraperResult.filing_ids"
-            "batch_size"   = 100
-          }
-        }
-        ResultPath = "$.downloadResult"
-        ResultSelector = {
-          "batches_sent.$"   = "$.Payload.batches_sent"
-          "filings_queued.$" = "$.Payload.filings_queued"
-        }
-        Next = "WaitForDownloads"
-        Catch = [{
-          ErrorEquals = ["States.ALL"]
-          Next        = "NotifyFailure"
-          ResultPath  = "$.error"
-        }]
-      }
-
-      # Step 4: Wait for downloads to complete (polling loop)
-      WaitForDownloads = {
-        Type    = "Wait"
-        Seconds = 300 # Wait 5 minutes
-        Next    = "CheckDownloadStatus"
-      }
-
-      CheckDownloadStatus = {
-        Type     = "Task"
-        Resource = "arn:aws:states:::lambda:invoke"
-        Parameters = {
-          FunctionName = var.check_status_lambda_arn
-          Payload      = {}
-        }
-        ResultPath = "$.statusResult"
-        ResultSelector = {
-          "pending_downloads.$"      = "$.Payload.pending_downloads"
-          "processing_downloads.$"   = "$.Payload.processing_downloads"
-          "all_downloads_complete.$" = "$.Payload.all_downloads_complete"
-        }
-        Next = "AreDownloadsComplete"
-        Catch = [{
-          ErrorEquals = ["States.ALL"]
-          Next        = "NotifyFailure"
-          ResultPath  = "$.error"
-        }]
-      }
-
-      AreDownloadsComplete = {
+      # ---------------------------------------------------------------
+      # Step 2b: Route by filing count — small batches use Lambda Map,
+      # large batches use AWS Batch (Fargate Spot).
+      # ---------------------------------------------------------------
+      RouteBySize = {
         Type = "Choice"
         Choices = [{
-          Variable      = "$.statusResult.all_downloads_complete"
-          BooleanEquals = true
-          Next          = "TriggerExtractions"
+          Variable           = "$.scraperResult.new_filings"
+          NumericGreaterThan = var.batch_filing_threshold
+          Next               = "WriteManifest"
         }]
-        Default = "IncrementWaitCounter"
+        Default = "DownloadFilings"
       }
 
-      IncrementWaitCounter = {
-        Type = "Pass"
-        Parameters = {
-          "waitCount.$" = "States.MathAdd($.waitCount, 1)"
-        }
-        ResultPath = "$.counter"
-        Next       = "CheckWaitLimit"
-      }
-
-      CheckWaitLimit = {
-        Type = "Choice"
-        Choices = [{
-          Variable           = "$.counter.waitCount"
-          NumericGreaterThan = 12                   # Max 12 iterations = 1 hour
-          Next               = "TriggerExtractions" # Proceed anyway after timeout
-        }]
-        Default = "WaitForDownloads"
-      }
-
-      # Step 5: Trigger extractions for completed downloads
-      TriggerExtractions = {
+      # ---------------------------------------------------------------
+      # Step 2c: Write manifest to S3 for Batch array job consumption.
+      # ---------------------------------------------------------------
+      WriteManifest = {
         Type     = "Task"
         Resource = "arn:aws:states:::lambda:invoke"
         Parameters = {
-          FunctionName = var.extraction_trigger_lambda_arn
+          FunctionName = var.write_manifest_lambda_arn
           Payload = {
-            "batch_size"    = 50
-            "document_type" = "PDF"
+            "filings.$" = "$.scraperResult.filings"
           }
         }
-        ResultPath = "$.extractionResult"
+        ResultPath = "$.manifestResult"
         ResultSelector = {
-          "batches_sent.$"   = "$.Payload.batches_sent"
-          "filings_queued.$" = "$.Payload.filings_queued"
+          "manifest_bucket.$" = "$.Payload.manifest_bucket"
+          "manifest_key.$"    = "$.Payload.manifest_key"
+          "array_size.$"      = "$.Payload.array_size"
+          "total_filings.$"   = "$.Payload.total_filings"
+          "chunk_size.$"      = "$.Payload.chunk_size"
         }
-        Next = "NotifySuccess"
+        Next = "BatchDownload"
         Catch = [{
           ErrorEquals = ["States.ALL"]
           Next        = "NotifyFailure"
@@ -227,21 +441,101 @@ resource "aws_sfn_state_machine" "hkex_workflow" {
         }]
       }
 
+      # ---------------------------------------------------------------
+      # Step 2d: Submit Batch array job and wait for completion (.sync).
+      # ---------------------------------------------------------------
+      BatchDownload = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::batch:submitJob.sync"
+        Parameters = {
+          JobName               = "batch-download"
+          "JobQueue"            = var.batch_job_queue_arn
+          "JobDefinition"       = var.batch_job_definition_arn
+          "ArrayProperties" = {
+            "Size.$" = "$.manifestResult.array_size"
+          }
+          "ContainerOverrides" = {
+            "Environment" = [
+              { "Name" = "MANIFEST_BUCKET", "Value.$" = "$.manifestResult.manifest_bucket" },
+              { "Name" = "MANIFEST_KEY", "Value.$" = "$.manifestResult.manifest_key" }
+            ]
+          }
+        }
+        ResultPath = "$.batchResult"
+        Next       = "NotifySuccess"
+        Retry = [{
+          ErrorEquals     = ["States.TaskFailed"]
+          IntervalSeconds = 60
+          MaxAttempts     = 3
+          BackoffRate     = 2.0
+        }]
+        Catch = [{
+          ErrorEquals = ["States.ALL"]
+          Next        = "NotifyFailure"
+          ResultPath  = "$.error"
+        }]
+      }
+
+      # ---------------------------------------------------------------
+      # Step 3: Map state — invoke the downloader Lambda once per filing.
+      # MaxConcurrency throttles parallel invocations to respect HKEX
+      # rate limits. Each iteration receives one FilingPayload element.
+      # ---------------------------------------------------------------
+      DownloadFilings = {
+        Type           = "Map"
+        ItemsPath      = "$.scraperResult.filings"
+        MaxConcurrency = var.download_max_concurrency
+        ItemProcessor = {
+          ProcessorConfig = {
+            Mode = "INLINE"
+          }
+          StartAt = "DownloadSingleFiling"
+          States = {
+            DownloadSingleFiling = {
+              Type     = "Task"
+              Resource = "arn:aws:states:::lambda:invoke"
+              Parameters = {
+                FunctionName = var.sfn_downloader_lambda_arn
+                "Payload.$"  = "$"
+              }
+              ResultSelector = {
+                "source_id.$" = "$.Payload.source_id"
+                "success.$"   = "$.Payload.success"
+                "s3_key.$"    = "$.Payload.s3_key"
+                "error.$"     = "$.Payload.error"
+              }
+              End = true
+              Retry = [{
+                ErrorEquals     = ["States.TaskFailed", "Lambda.ServiceException", "Lambda.TooManyRequestsException"]
+                IntervalSeconds = 30
+                MaxAttempts     = 2
+                BackoffRate     = 2.0
+              }]
+            }
+          }
+        }
+        ResultPath = "$.downloadResults"
+        Next       = "NotifySuccess"
+        Catch = [{
+          ErrorEquals = ["States.ALL"]
+          Next        = "NotifyFailure"
+          ResultPath  = "$.error"
+        }]
+      }
+
+      # ---------------------------------------------------------------
       # Final notification states
+      # ---------------------------------------------------------------
       NotifySuccess = {
         Type     = "Task"
         Resource = "arn:aws:states:::lambda:invoke"
         Parameters = {
           FunctionName = var.notify_lambda_arn
           Payload = {
-            "status"                    = "SUCCESS"
-            "total_announcements.$"     = "$.scraperResult.total_announcements"
-            "new_filings.$"             = "$.scraperResult.new_filings"
-            "updated_filings.$"         = "$.scraperResult.updated_filings"
-            "download_batches_sent.$"   = "$.downloadResult.batches_sent"
-            "downloads_queued.$"        = "$.downloadResult.filings_queued"
-            "extraction_batches_sent.$" = "$.extractionResult.batches_sent"
-            "extractions_queued.$"      = "$.extractionResult.filings_queued"
+            "status"                = "SUCCESS"
+            "total_announcements.$" = "$.scraperResult.total_announcements"
+            "new_filings.$"         = "$.scraperResult.new_filings"
+            "updated_filings.$"     = "$.scraperResult.updated_filings"
           }
         }
         End = true

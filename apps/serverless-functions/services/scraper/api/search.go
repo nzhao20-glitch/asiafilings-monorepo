@@ -51,7 +51,7 @@ type SearchParams struct {
 	Market       string    // SEHK, GEM, or empty for all
 	StockCode    string    // Specific stock code or empty for all
 	Category     int       // Document category (-2 for all)
-	RowRange     int       // Results per page (max 100)
+	RowRange     int       // Results per page (SearchAll paginates automatically)
 	Offset       int       // Pagination offset
 	SortDir      int       // 0 = descending (newest first), 1 = ascending
 }
@@ -62,8 +62,8 @@ func DefaultSearchParams() SearchParams {
 		FromDate: time.Now().AddDate(0, -1, 0), // Last month
 		ToDate:   time.Now(),
 		Market:   "SEHK",
-		Category: -2,    // All categories
-		RowRange: 20000, // API supports large values; 20k is enough for any month
+		Category: -2,  // All categories
+		RowRange: 500, // Results per page; SearchAll paginates automatically
 		Offset:   0,
 		SortDir:  0, // Newest first
 	}
@@ -79,8 +79,9 @@ func NewSearchClient(cfg *config.Config) *SearchClient {
 	}
 }
 
-// Search performs a search query and returns results
-func (c *SearchClient) Search(params SearchParams) ([]SearchResult, int, error) {
+// Search performs a single search query and returns results, total count, and
+// whether more rows are available (for pagination).
+func (c *SearchClient) Search(params SearchParams) ([]SearchResult, int, bool, error) {
 	c.rateLimit()
 
 	// Build query URL
@@ -112,7 +113,7 @@ func (c *SearchClient) Search(params SearchParams) ([]SearchResult, int, error) 
 
 	req, err := http.NewRequest("GET", fullURL, nil)
 	if err != nil {
-		return nil, 0, fmt.Errorf("creating request: %w", err)
+		return nil, 0, false, fmt.Errorf("creating request: %w", err)
 	}
 
 	req.Header.Set("User-Agent", "HKEXScraper/1.0")
@@ -120,29 +121,29 @@ func (c *SearchClient) Search(params SearchParams) ([]SearchResult, int, error) 
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("executing search: %w", err)
+		return nil, 0, false, fmt.Errorf("executing search: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		return nil, 0, false, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
 	// Parse wrapper response
 	var wrapper SearchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
-		return nil, 0, fmt.Errorf("decoding response wrapper: %w", err)
+		return nil, 0, false, fmt.Errorf("decoding response wrapper: %w", err)
 	}
 
 	// Handle empty results
 	if wrapper.Result == "null" || wrapper.Result == "" {
-		return []SearchResult{}, 0, nil
+		return []SearchResult{}, 0, false, nil
 	}
 
 	// Parse the inner result array (it's a JSON string)
 	var results []SearchResult
 	if err := json.Unmarshal([]byte(wrapper.Result), &results); err != nil {
-		return nil, 0, fmt.Errorf("decoding results: %w", err)
+		return nil, 0, false, fmt.Errorf("decoding results: %w", err)
 	}
 
 	// Get total count from first result
@@ -151,30 +152,41 @@ func (c *SearchClient) Search(params SearchParams) ([]SearchResult, int, error) 
 		totalCount, _ = strconv.Atoi(results[0].TotalCount)
 	}
 
-	return results, totalCount, nil
+	return results, totalCount, wrapper.HasNextRow, nil
 }
 
-// SearchAll fetches all results for a date range.
-// Uses a large rowRange (up to 20000) to get all results in one request.
-// If more than rowRange results exist, logs a warning and returns what's available.
+// SearchAll fetches all results for a query, paginating automatically using
+// the API's hasNextRow / loadedRecord mechanism.
 func (c *SearchClient) SearchAll(params SearchParams) ([]SearchResult, error) {
-	// Ensure we request enough results (20k is enough for any single month)
-	if params.RowRange < 20000 {
-		params.RowRange = 20000
+	if params.RowRange <= 0 {
+		params.RowRange = 500
 	}
 
-	results, totalCount, err := c.Search(params)
-	if err != nil {
-		return nil, err
+	var allResults []SearchResult
+	offset := params.Offset
+
+	for {
+		params.Offset = offset
+		results, totalCount, hasNext, err := c.Search(params)
+		if err != nil {
+			return nil, err
+		}
+
+		allResults = append(allResults, results...)
+
+		if !hasNext || len(results) == 0 {
+			break
+		}
+
+		offset += len(results)
+
+		// Safety: stop if we've fetched everything reported by totalCount
+		if totalCount > 0 && offset >= totalCount {
+			break
+		}
 	}
 
-	// Warn if results are truncated (shouldn't happen with rowRange=20000 per month)
-	if totalCount > len(results) {
-		fmt.Printf("WARNING: %d results available but only %d returned (date range may be too large)\n",
-			totalCount, len(results))
-	}
-
-	return results, nil
+	return allResults, nil
 }
 
 // SearchByDateRange fetches announcements within a date range
@@ -197,7 +209,7 @@ func (c *SearchClient) SearchByDateRange(from, to time.Time, market string) ([]S
 			ToDate:   chunkEnd,
 			Market:   market,
 			Category: -2,
-			RowRange: 100,
+			RowRange: 500,
 			SortDir:  0,
 		}
 

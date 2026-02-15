@@ -11,6 +11,13 @@ import (
 	"github.com/nicholaszhao/hkex-scraper/packages/go/models"
 )
 
+// FetchByDateRange queries the HKEX Search API for announcements within a date range.
+// This replaces paginated fetching for date-scoped queries (daily runs and backfills).
+func (c *Client) FetchByDateRange(from, to time.Time, market string) ([]SearchResult, error) {
+	searchClient := NewSearchClient(c.config)
+	return searchClient.SearchByDateRange(from, to, market)
+}
+
 // Client handles HTTP requests to HKEX API
 type Client struct {
 	httpClient *http.Client

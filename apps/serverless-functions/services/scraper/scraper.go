@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/nicholaszhao/hkex-scraper/packages/go/config"
 	"github.com/nicholaszhao/hkex-scraper/packages/go/database"
@@ -183,6 +184,93 @@ func (s *Scraper) downloadDocument(ctx context.Context, ann *models.Announcement
 			filing.ProcessingStatus = models.ProcessingStatusCompleted
 			s.db.UpsertFiling(ctx, filing)
 		}
+	}
+
+	return nil
+}
+
+// RunByDateRange executes the scraping workflow for a specific date range,
+// using the HKEX Search API instead of paginated News API. This replaces the
+// MaxPages loop for both daily runs and historical backfills.
+func (s *Scraper) RunByDateRange(ctx context.Context, from, to time.Time, market string) (*Result, error) {
+	result := &Result{}
+
+	log.Printf("Searching HKEX: %s to %s (market: %s)",
+		from.Format("2006-01-02"), to.Format("2006-01-02"), market)
+
+	searchResults, err := s.client.FetchByDateRange(from, to, market)
+	if err != nil {
+		return nil, fmt.Errorf("searching HKEX: %w", err)
+	}
+
+	result.TotalAnnouncements = len(searchResults)
+	log.Printf("Found %d announcements in date range", result.TotalAnnouncements)
+
+	for i := range searchResults {
+		sr := &searchResults[i]
+
+		if sr.StockCode == "" {
+			continue
+		}
+
+		if s.db != nil {
+			if err := s.persistSearchResult(ctx, sr, result); err != nil {
+				log.Printf("Error persisting search result %s: %v", sr.NewsID, err)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// persistSearchResult saves a SearchResult and its company to the database
+func (s *Scraper) persistSearchResult(ctx context.Context, sr *api.SearchResult, result *Result) error {
+	// Get or create company
+	company, err := s.db.GetCompanyByStockCode(ctx, sr.StockCode)
+	if err != nil {
+		return fmt.Errorf("getting company: %w", err)
+	}
+
+	if company == nil {
+		company = &models.Company{
+			ID:          sr.StockCode,
+			StockCode:   sr.StockCode,
+			CompanyName: sr.StockName,
+			MarketType:  models.MarketTypeSEHK,
+			Exchange:    "HKEX",
+		}
+		if models.IsEnglishText(sr.StockName) {
+			company.CompanyNameEn = sr.StockName
+		}
+		if err := s.db.UpsertCompany(ctx, company); err != nil {
+			return fmt.Errorf("creating company: %w", err)
+		}
+		log.Printf("Created company: %s (%s)", company.StockCode, company.CompanyName)
+	}
+
+	// Check if filing already exists
+	existing, err := s.db.GetFilingBySourceID(ctx, "HKEX", sr.NewsID)
+	if err != nil {
+		return fmt.Errorf("checking existing filing: %w", err)
+	}
+
+	// Convert search result to filing
+	filing := models.SearchResultToFiling(
+		sr.NewsID, sr.Title, sr.StockCode, sr.StockName,
+		sr.DateTime, sr.FileType, sr.FileInfo, sr.FileLink,
+		sr.LongText, company.ID,
+	)
+
+	if existing != nil {
+		filing.ID = existing.ID
+		filing.CreatedAt = existing.CreatedAt
+		result.UpdatedFilings++
+	} else {
+		result.NewFilings++
+	}
+
+	if err := s.db.UpsertFiling(ctx, filing); err != nil {
+		return fmt.Errorf("saving filing: %w", err)
 	}
 
 	return nil

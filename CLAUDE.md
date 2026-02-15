@@ -47,7 +47,7 @@ Each app owns its own IaC for app-specific resources. Shared resources (VPC, S3,
 | App | Infra Path | Resources |
 |-----|-----------|-----------|
 | web-platform | `apps/web-platform/infra/` | Terraform (ECS, ALB, ECR, S3), EC2 deploy scripts, nginx config |
-| serverless-functions | `apps/serverless-functions/infra/` | Terraform modules (Lambda, SQS, CloudWatch) |
+| serverless-functions | `apps/serverless-functions/infra/` | Terraform modules (Lambda, Step Functions, EventBridge, SQS) |
 | data-pipeline | `apps/data-pipeline/infra/` | Terraform modules (Batch, DynamoDB, Quickwit, S3 notifications) |
 
 ## Secret Management (AWS SSM Parameter Store)
