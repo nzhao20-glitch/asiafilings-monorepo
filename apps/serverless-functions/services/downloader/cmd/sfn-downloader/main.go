@@ -23,13 +23,15 @@ type FilingPayload struct {
 	ReportDate    string `json:"report_date"` // RFC3339
 }
 
-// DownloadResult is the output returned to Step Functions
+// DownloadResult is the output returned to Step Functions.
+// All fields are always present (no omitempty) so JSONPath selectors in the
+// state machine ResultSelector never fail on missing keys.
 type DownloadResult struct {
 	SourceID string `json:"source_id"`
 	Success  bool   `json:"success"`
-	S3Key    string `json:"s3_key,omitempty"`
-	FileSize int64  `json:"file_size,omitempty"`
-	Error    string `json:"error,omitempty"`
+	S3Key    string `json:"s3_key"`
+	FileSize int64  `json:"file_size"`
+	Error    string `json:"error"`
 }
 
 // Handler processes a single filing payload from the Step Functions Map state.
@@ -110,7 +112,7 @@ func Handler(ctx context.Context, payload FilingPayload) (*DownloadResult, error
 			log.Printf("Warning: failed to connect to database: %v", dbErr)
 		} else {
 			defer db.Close()
-			if updateErr := db.UpdateFilingDownloadFull(ctx, filing.SourceID, result.LocalPath, result.S3Key, status, errorMsg); updateErr != nil {
+			if updateErr := db.UpdateFilingDownloadFull(ctx, filing.Exchange, filing.SourceID, result.LocalPath, result.S3Key, status, errorMsg); updateErr != nil {
 				log.Printf("Warning: failed to update filing status: %v", updateErr)
 			}
 		}

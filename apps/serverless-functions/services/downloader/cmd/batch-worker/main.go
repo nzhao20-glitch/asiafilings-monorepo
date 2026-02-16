@@ -125,6 +125,12 @@ func main() {
 		}
 	}
 
+	// Build lookup map from SourceID → Exchange for DB updates
+	exchangeByID := make(map[string]string, len(filings))
+	for _, fp := range filings {
+		exchangeByID[fp.SourceID] = fp.Exchange
+	}
+
 	// Use BatchDownloader for concurrent processing with status updates
 	batchDl := downloader.NewBatchDownloader(dl, nil)
 	start := time.Now()
@@ -151,7 +157,12 @@ func main() {
 				errorMsg = r.Error.Error()
 			}
 
-			if updateErr := db.UpdateFilingDownloadFull(ctx, r.FilingID, r.LocalPath, r.S3Key, status, errorMsg); updateErr != nil {
+			exchange := exchangeByID[r.FilingID]
+			if exchange == "" {
+				exchange = "HKEX"
+			}
+
+			if updateErr := db.UpdateFilingDownloadFull(ctx, exchange, r.FilingID, r.LocalPath, r.S3Key, status, errorMsg); updateErr != nil {
 				log.Printf("Warning: failed to update filing %s: %v", r.FilingID, updateErr)
 			}
 		}

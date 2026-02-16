@@ -63,7 +63,7 @@ func DefaultSearchParams() SearchParams {
 		ToDate:   time.Now(),
 		Market:   "SEHK",
 		Category: -2,  // All categories
-		RowRange: 500, // Results per page; SearchAll paginates automatically
+		RowRange: 50000, // Fetch all results in one call (HKEX API ignores offset-based pagination)
 		Offset:   0,
 		SortDir:  0, // Newest first
 	}
@@ -209,7 +209,7 @@ func (c *SearchClient) SearchByDateRange(from, to time.Time, market string) ([]S
 			ToDate:   chunkEnd,
 			Market:   market,
 			Category: -2,
-			RowRange: 500,
+			RowRange: 50000, // Fetch all results in one call (HKEX API ignores offset-based pagination)
 			SortDir:  0,
 		}
 

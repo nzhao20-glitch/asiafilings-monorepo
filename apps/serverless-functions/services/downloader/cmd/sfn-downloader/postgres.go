@@ -33,11 +33,12 @@ func (db *PostgresDB) Close() {
 	db.pool.Close()
 }
 
-// UpdateFilingDownloadFull updates a filing after a download attempt
-func (db *PostgresDB) UpdateFilingDownloadFull(ctx context.Context, filingID, localPath, s3Key string, status models.ProcessingStatus, errorMsg string) error {
+// UpdateFilingDownloadFull updates a filing after a download attempt.
+// Uses the composite PK (exchange, source_id) for the WHERE clause.
+func (db *PostgresDB) UpdateFilingDownloadFull(ctx context.Context, exchange, sourceID, localPath, s3Key string, status models.ProcessingStatus, errorMsg string) error {
 	query := `UPDATE filings SET local_path = $1, pdf_s3_key = $2, processing_status = $3,
-		processing_error = $4, updated_at = $5 WHERE source_id = $6`
+		processing_error = $4, updated_at = $5 WHERE exchange = $6 AND source_id = $7`
 
-	_, err := db.pool.Exec(ctx, query, localPath, s3Key, status, errorMsg, time.Now(), filingID)
+	_, err := db.pool.Exec(ctx, query, localPath, s3Key, status, errorMsg, time.Now(), exchange, sourceID)
 	return err
 }
