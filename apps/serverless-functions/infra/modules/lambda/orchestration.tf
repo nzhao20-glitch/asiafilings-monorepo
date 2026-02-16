@@ -317,11 +317,6 @@ resource "aws_lambda_function" "sfn_downloader" {
   filename         = "${path.module}/../../../services/downloader/cmd/sfn-downloader/sfn-downloader.zip"
   source_code_hash = filebase64sha256("${path.module}/../../../services/downloader/cmd/sfn-downloader/sfn-downloader.zip")
 
-  vpc_config {
-    subnet_ids         = var.subnet_ids
-    security_group_ids = [var.security_group_id]
-  }
-
   environment {
     variables = {
       DATABASE_URL   = var.database_url

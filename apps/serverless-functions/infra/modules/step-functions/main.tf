@@ -9,12 +9,11 @@
 #
 #   Backfill (start_date + end_date provided):
 #     GenerateChunks → BackfillMonths Map(MaxConcurrency=1):
-#       ScrapeMonth → CheckMonthFilings →
-#         Has filings: WriteMonthManifest → BatchDownloadMonth → MonthDone
-#         No filings:  MonthNoFilings
+#       ScrapeMonth → CheckMonthFilings → RouteMonthBySize →
+#         ≤1000: DownloadMonthFilings (Map) → MonthDone
+#         >1000: WriteMonthManifest → BatchDownloadMonth → MonthDone
+#         No filings: MonthNoFilings
 #     → NotifyBackfillSuccess
-#
-# Backfill always uses Batch (avoids nested Map 25k event limit).
 # Each month's errors are isolated via Catch → MonthFailed.
 #
 # -----------------------------------------------------------------------
@@ -50,7 +49,7 @@ variable "notify_lambda_arn" {
 variable "download_max_concurrency" {
   description = "Max concurrent download Lambda invocations in the Map state (protects HKEX rate limits)"
   type        = number
-  default     = 10
+  default     = 5
 }
 
 variable "write_manifest_lambda_arn" {
@@ -242,9 +241,61 @@ resource "aws_sfn_state_machine" "hkex_workflow" {
               Choices = [{
                 Variable           = "$.scraperResult.new_filings"
                 NumericGreaterThan = 0
-                Next               = "WriteMonthManifest"
+                Next               = "RouteMonthBySize"
               }]
               Default = "MonthNoFilings"
+            }
+
+            # Route small months through Lambda Map, large months through Batch
+            RouteMonthBySize = {
+              Type = "Choice"
+              Choices = [{
+                Variable           = "$.scraperResult.new_filings"
+                NumericGreaterThan = var.batch_filing_threshold
+                Next               = "WriteMonthManifest"
+              }]
+              Default = "DownloadMonthFilings"
+            }
+
+            # Map state for small filing counts (avoids Batch array_size >= 2 requirement)
+            DownloadMonthFilings = {
+              Type           = "Map"
+              ItemsPath      = "$.scraperResult.filings"
+              MaxConcurrency = var.download_max_concurrency
+              ItemProcessor = {
+                ProcessorConfig = {
+                  Mode = "INLINE"
+                }
+                StartAt = "DownloadMonthFiling"
+                States = {
+                  DownloadMonthFiling = {
+                    Type     = "Task"
+                    Resource = "arn:aws:states:::lambda:invoke"
+                    Parameters = {
+                      FunctionName = var.sfn_downloader_lambda_arn
+                      "Payload.$"  = "$"
+                    }
+                    ResultSelector = {
+                      "source_id.$" = "$.Payload.source_id"
+                      "success.$"   = "$.Payload.success"
+                    }
+                    End = true
+                    Retry = [{
+                      ErrorEquals     = ["States.TaskFailed", "Lambda.ServiceException", "Lambda.TooManyRequestsException"]
+                      IntervalSeconds = 30
+                      MaxAttempts     = 2
+                      BackoffRate     = 2.0
+                    }]
+                  }
+                }
+              }
+              ResultPath = "$.downloadResults"
+              Next       = "MonthDone"
+              Catch = [{
+                ErrorEquals = ["States.ALL"]
+                Next        = "MonthFailed"
+                ResultPath  = "$.error"
+              }]
             }
 
             WriteMonthManifest = {
@@ -501,8 +552,6 @@ resource "aws_sfn_state_machine" "hkex_workflow" {
               ResultSelector = {
                 "source_id.$" = "$.Payload.source_id"
                 "success.$"   = "$.Payload.success"
-                "s3_key.$"    = "$.Payload.s3_key"
-                "error.$"     = "$.Payload.error"
               }
               End = true
               Retry = [{
