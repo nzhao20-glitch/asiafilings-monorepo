@@ -7,6 +7,26 @@ import (
 	"time"
 )
 
+// IsStructuredProduct returns true if a stock code belongs to a structured
+// product range (Derivative Warrants, CBBCs, Inline Warrants). These are
+// short-lived leveraged products with boilerplate filings that should be
+// excluded from the fundamental research database.
+func IsStructuredProduct(stockCode string) bool {
+	code, err := strconv.Atoi(strings.TrimLeft(stockCode, "0"))
+	if err != nil {
+		return false
+	}
+	switch {
+	case code >= 10000 && code <= 29999: // Derivative Warrants
+		return true
+	case code >= 50000 && code <= 69999: // CBBCs
+		return true
+	case code >= 80000 && code <= 89999: // Inline Warrants
+		return true
+	}
+	return false
+}
+
 // GenerateID generates a unique ID with a prefix
 func GenerateID(prefix string) string {
 	return fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano())

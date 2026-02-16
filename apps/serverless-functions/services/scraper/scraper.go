@@ -104,6 +104,12 @@ func (s *Scraper) persistAnnouncement(ctx context.Context, ann *models.Announcem
 	// Use the first stock as the primary company
 	stock := &ann.Stock[0]
 
+	// Skip structured products (DWs, CBBCs, Inline Warrants)
+	if models.IsStructuredProduct(stock.SC) {
+		result.Skipped++
+		return nil
+	}
+
 	// Get or create company
 	company, err := s.db.GetCompanyByStockCode(ctx, stock.SC)
 	if err != nil {
@@ -210,6 +216,12 @@ func (s *Scraper) RunByDateRange(ctx context.Context, from, to time.Time, market
 		sr := &searchResults[i]
 
 		if sr.StockCode == "" {
+			continue
+		}
+
+		// Skip structured products (DWs, CBBCs, Inline Warrants)
+		if models.IsStructuredProduct(sr.StockCode) {
+			result.Skipped++
 			continue
 		}
 

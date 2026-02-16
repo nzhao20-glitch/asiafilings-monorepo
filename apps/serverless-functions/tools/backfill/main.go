@@ -190,6 +190,11 @@ func processSearchResult(ctx context.Context, db *database.DB, r *api.SearchResu
 		return nil
 	}
 
+	// Skip structured products (DWs, CBBCs, Inline Warrants)
+	if models.IsStructuredProduct(r.StockCode) {
+		return nil
+	}
+
 	// Get or create company
 	company, err := db.GetCompanyByStockCode(ctx, r.StockCode)
 	if err != nil {

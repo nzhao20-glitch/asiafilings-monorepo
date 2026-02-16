@@ -123,6 +123,11 @@ func Handler(ctx context.Context, input ScraperInput) (*ScraperOutput, error) {
 			continue
 		}
 
+		// Skip structured products (DWs, CBBCs, Inline Warrants)
+		if models.IsStructuredProduct(r.StockCode) {
+			continue
+		}
+
 		// Get or create company
 		company, err := db.GetCompanyByStockCode(ctx, r.StockCode)
 		if err != nil {
