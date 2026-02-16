@@ -9,7 +9,7 @@ Go-based scraper and downloader for Hong Kong Exchange (HKEX) company filings, o
 - **Daily automation** — EventBridge triggers at 6 PM HKT; defaults to last 24 hours
 - **Historical backfill** — pass `start_date` / `end_date` via the AWS CLI; auto-chunks into monthly iterations to avoid Lambda timeout
 - **Concurrent downloads** — Map state fans out one Lambda per filing with configurable concurrency
-- **Batch downloads** — AWS Batch (Fargate Spot) for large batches (>1000 filings) and all backfills
+- **Batch downloads** — AWS Batch (Fargate Spot, ARM64) for large batches (>1000 filings)
 - Download to S3 with retry, rate-limit detection, and anti-fingerprinting
 - SQLite for local development, PostgreSQL for production
 
@@ -37,9 +37,13 @@ Go-based scraper and downloader for Hong Kong Exchange (HKEX) company filings, o
 │   │   └── cmd/
 │   │       ├── main.go                   # SQS-triggered Lambda (batch of IDs)
 │   │       ├── postgres.go               # PostgreSQL queries
-│   │       └── sfn-downloader/           # Step Functions Lambda (single filing)
-│   │           ├── main.go               # Accepts FilingPayload from Map state
-│   │           └── postgres.go           # PostgreSQL update
+│   │       ├── sfn-downloader/           # Step Functions Lambda (single filing)
+│   │       │   ├── main.go               # Accepts FilingPayload from Map state
+│   │       │   └── postgres.go           # PostgreSQL update
+│   │       └── batch-worker/             # Fargate Spot container (Batch array jobs)
+│   │           ├── main.go               # Reads S3 manifest, downloads chunk by array index
+│   │           ├── postgres.go           # PostgreSQL update
+│   │           └── Dockerfile            # ARM64 Alpine image
 │   │
 │   └── orchestrator/                     # Workflow support Lambdas
 │       └── cmd/
@@ -98,10 +102,11 @@ EventBridge (daily 6 PM HKT)  ──or──  Manual CLI invocation
                   │    │  CheckMonthFilings │
                   │    │    │         │    │
                   │    │    ▼         ▼    │
-                  │    │  WriteMon.  Skip  │
-                  │    │    │              │
-                  │    │    ▼              │
-                  │    │  BatchDL   Done   │
+                  │    │  Route by size    │
+                  │    │  ≤1000│   │>1000  │
+                  │    │   Map  WriteMon.  │
+                  │    │    │    │         │
+                  │    │    │  BatchDL     │
                   │    │    │              │
                   │    │    ▼              │
                   │    │  MonthDone        │  ~80B summary per month
@@ -238,22 +243,22 @@ aws stepfunctions start-execution \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `download_max_concurrency` | `10` | Max parallel download Lambdas in Map state |
+| `download_max_concurrency` | `5` | Max parallel download Lambdas in Map state |
 | `schedule_expression` | `cron(0 10 * * ? *)` | EventBridge schedule (10 AM UTC = 6 PM HKT) |
 | `lambda_timeout` | `300` | Lambda timeout in seconds |
 | `max_concurrent_lambdas` | `-1` | Reserved concurrency for SQS downloader |
 
 ## API Endpoints Used
 
-1. **Search API** (`/search/titleSearchServlet.do`) — Date-range queries, used by the Lambda scraper and backfill tool. Supports up to 20,000 results per month.
+1. **Search API** (`/search/titleSearchServlet.do`) — Date-range queries, used by the Lambda scraper and backfill tool. **Note:** The API's `loadedRecord` offset parameter is non-functional (pagination returns identical pages). We work around this by setting `rowRange=50000` to fetch all results in a single request per month.
 2. **News API** (`/ncms/json/eds/lcisehk1relsdc_{page}.json`) — Paginated recent announcements, used by the local CLI scraper.
 
 ## Database Schema (PostgreSQL)
 
 | Table | Key Columns |
 |-------|-------------|
-| `companies` | `id`, `stock_code` (unique), `company_name`, `market_type`, `exchange` |
-| `filings` | `id`, `company_id` (FK), `source_id`, `exchange` (unique: exchange+source_id), `processing_status` |
+| `companies` | PK: `(exchange, company_id)`. Columns: `name`, `stock_code`, `updated_at` |
+| `filings` | PK: `(exchange, source_id)`. Columns: `company_id`, `title`, `source_url`, `pdf_s3_key`, `processing_status`, `report_date`, etc. |
 | `extracted_tables` | `id`, `filing_id` (FK), `page_number`, `headers`, `rows`, `confidence` |
 
 ### Processing Statuses

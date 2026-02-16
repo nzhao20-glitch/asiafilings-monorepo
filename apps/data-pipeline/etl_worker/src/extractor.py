@@ -140,26 +140,12 @@ def process_html_bytes(
 
 
 def _extract_page_text(page) -> str:
-    """Extract concatenated text from a pymupdf page.
+    """Extract text from a pymupdf page.
 
     Returns:
-        The full page text with blocks separated by newlines.
+        The full page text.
     """
-    page_dict = page.get_text("dict")
-    text_parts = []
-
-    for block in page_dict["blocks"]:
-        if block["type"] != 0:  # skip image blocks
-            continue
-        block_text = "\n".join(
-            " ".join(span["text"] for span in line["spans"])
-            for line in block["lines"]
-        )
-        if not block_text.strip():
-            continue
-        text_parts.append(block_text)
-
-    return "\n".join(text_parts)
+    return page.get_text("text")
 
 
 def process_pdf_bytes(

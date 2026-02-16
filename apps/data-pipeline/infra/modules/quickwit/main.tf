@@ -974,9 +974,10 @@ resource "aws_lambda_function" "ingest" {
 }
 
 resource "aws_lambda_event_source_mapping" "ingest_sqs" {
-  event_source_arn = var.sqs_queue_arn
-  function_name    = aws_lambda_function.ingest.arn
-  batch_size       = 1
+  event_source_arn  = var.sqs_queue_arn
+  function_name     = aws_lambda_function.ingest.arn
+  batch_size        = 1
+  maximum_concurrency = 5
 }
 
 # -----------------------------------------------------------------------------
