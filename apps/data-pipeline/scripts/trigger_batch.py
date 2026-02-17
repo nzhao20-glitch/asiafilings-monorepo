@@ -2,21 +2,28 @@
 """
 Trigger AWS Batch array job for filing ETL processing.
 
+Splits the manifest CSV into per-job chunks and uploads them to S3,
+so each Batch job only downloads its own small chunk (~1000 rows)
+instead of the full manifest.
+
 Usage:
     python trigger_batch.py --manifest-bucket <bucket> --manifest-key <key>
 
 Environment Variables:
-    AWS_REGION: AWS region (default: ap-northeast-2)
+    AWS_REGION: AWS region (default: ap-east-1)
     BATCH_JOB_QUEUE: Batch job queue name
     BATCH_JOB_DEFINITION: Batch job definition name
     CHUNK_SIZE: Files per job (default: 1000)
 """
 
 import argparse
+import csv
+import io
 import logging
 import math
 import os
 import sys
+import time
 
 import boto3
 
@@ -27,13 +34,76 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def count_manifest_rows(s3_client, bucket: str, key: str) -> int:
-    """Count rows in manifest CSV (excluding header)."""
+def split_and_upload_manifest(
+    s3_client,
+    bucket: str,
+    key: str,
+    chunk_size: int,
+    prefix: str,
+) -> int:
+    """Split manifest into per-job chunks and upload to S3.
+
+    Each chunk is a valid CSV with headers, containing up to chunk_size rows.
+    Streams through the manifest one chunk at a time to limit memory usage.
+
+    Args:
+        s3_client: Boto3 S3 client
+        bucket: S3 bucket containing the manifest
+        key: S3 key of the full manifest CSV
+        chunk_size: Number of rows per chunk
+        prefix: S3 key prefix for uploaded chunks
+
+    Returns:
+        Number of chunks created (= array size)
+    """
+    logger.info(f"Downloading manifest: s3://{bucket}/{key}")
     response = s3_client.get_object(Bucket=bucket, Key=key)
     content = response['Body'].read().decode('utf-8')
-    lines = content.strip().split('\n')
-    # Subtract 1 for header
-    return max(0, len(lines) - 1)
+
+    reader = csv.DictReader(io.StringIO(content))
+    headers = reader.fieldnames
+
+    chunk_index = 0
+    chunk_rows = []
+
+    for row in reader:
+        chunk_rows.append(row)
+        if len(chunk_rows) >= chunk_size:
+            _upload_chunk(s3_client, bucket, prefix, chunk_index, headers, chunk_rows)
+            chunk_index += 1
+            chunk_rows = []
+
+    if chunk_rows:
+        _upload_chunk(s3_client, bucket, prefix, chunk_index, headers, chunk_rows)
+        chunk_index += 1
+
+    return chunk_index
+
+
+def _upload_chunk(
+    s3_client,
+    bucket: str,
+    prefix: str,
+    chunk_index: int,
+    headers: list,
+    rows: list,
+):
+    """Upload a single chunk CSV to S3."""
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=headers)
+    writer.writeheader()
+    writer.writerows(rows)
+
+    chunk_key = f"{prefix}/chunk_{chunk_index:06d}.csv"
+    s3_client.put_object(
+        Bucket=bucket,
+        Key=chunk_key,
+        Body=output.getvalue().encode('utf-8'),
+        ContentType='text/csv',
+    )
+
+    if (chunk_index + 1) % 100 == 0:
+        logger.info(f"Uploaded chunk {chunk_index + 1}")
 
 
 def submit_batch_job(
@@ -41,18 +111,17 @@ def submit_batch_job(
     job_queue: str,
     job_definition: str,
     manifest_bucket: str,
-    manifest_key: str,
+    manifest_prefix: str,
     array_size: int,
     chunk_size: int,
     exchange: str = "",
-    job_name: str = "filing-etl"
+    job_name: str = "filing-etl",
 ) -> dict:
     """Submit AWS Batch array job."""
 
-    # Environment variable overrides
     env_overrides = [
         {"name": "MANIFEST_BUCKET", "value": manifest_bucket},
-        {"name": "MANIFEST_KEY", "value": manifest_key},
+        {"name": "MANIFEST_PREFIX", "value": manifest_prefix},
         {"name": "CHUNK_SIZE", "value": str(chunk_size)},
     ]
 
@@ -129,29 +198,31 @@ def main():
 
     args = parser.parse_args()
 
-    # Initialize AWS clients
     s3_client = boto3.client("s3", region_name=args.region)
     batch_client = boto3.client("batch", region_name=args.region)
 
-    # Count files in manifest
-    logger.info(f"Reading manifest: s3://{args.manifest_bucket}/{args.manifest_key}")
-    total_files = count_manifest_rows(s3_client, args.manifest_bucket, args.manifest_key)
-    logger.info(f"Total files in manifest: {total_files}")
+    # Split manifest into per-job chunks and upload to S3
+    manifest_prefix = f"manifests/{args.job_name}-{int(time.time())}"
 
-    if total_files == 0:
+    logger.info(f"Splitting manifest into chunks of {args.chunk_size}...")
+    array_size = split_and_upload_manifest(
+        s3_client,
+        args.manifest_bucket,
+        args.manifest_key,
+        args.chunk_size,
+        manifest_prefix,
+    )
+    logger.info(f"Uploaded {array_size} chunks to s3://{args.manifest_bucket}/{manifest_prefix}/")
+
+    if array_size == 0:
         logger.error("Manifest is empty, nothing to process")
         sys.exit(1)
-
-    # Calculate array size
-    array_size = math.ceil(total_files / args.chunk_size)
-    logger.info(f"Chunk size: {args.chunk_size}")
-    logger.info(f"Array size (number of jobs): {array_size}")
 
     if args.dry_run:
         logger.info("DRY RUN - Job parameters:")
         logger.info(f"  Job Queue: {args.job_queue}")
         logger.info(f"  Job Definition: {args.job_definition}")
-        logger.info(f"  Manifest: s3://{args.manifest_bucket}/{args.manifest_key}")
+        logger.info(f"  Manifest prefix: s3://{args.manifest_bucket}/{manifest_prefix}/")
         logger.info(f"  Array Size: {array_size}")
         logger.info(f"  Exchange: {args.exchange or 'not set'}")
         return
@@ -163,11 +234,11 @@ def main():
         job_queue=args.job_queue,
         job_definition=args.job_definition,
         manifest_bucket=args.manifest_bucket,
-        manifest_key=args.manifest_key,
+        manifest_prefix=manifest_prefix,
         array_size=array_size,
         chunk_size=args.chunk_size,
         exchange=args.exchange,
-        job_name=args.job_name
+        job_name=args.job_name,
     )
 
     job_id = response["jobId"]

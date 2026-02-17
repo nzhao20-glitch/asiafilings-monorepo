@@ -115,11 +115,15 @@ export default async function quickwitSearchRoutes(fastify: FastifyInstance) {
           filingMap.set(hit.document_id, { hit, matched_pages: [] });
         }
 
-        filingMap.get(hit.document_id)!.matched_pages.push({
-          page_number: hit.page_number,
-          snippet,
-          match_count: matchCount,
-        });
+        const entry = filingMap.get(hit.document_id)!;
+        // Skip duplicate pages (can occur if the same JSONL was ingested twice)
+        if (!entry.matched_pages.some(p => p.page_number === hit.page_number)) {
+          entry.matched_pages.push({
+            page_number: hit.page_number,
+            snippet,
+            match_count: matchCount,
+          });
+        }
       }
 
       // Build filing-level results

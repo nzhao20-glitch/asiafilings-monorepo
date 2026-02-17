@@ -382,6 +382,7 @@ locals {
     EIP_ALLOC_ID='${aws_eip.indexer.id}'
     RDS_HOST='${var.rds_host}'
     RDS_PASSWORD='${var.rds_password}'
+    SQS_QUEUE_URL='${var.sqs_queue_url}'
     ENVEOF
     chmod 600 /etc/quickwit-boot.env
 
@@ -495,6 +496,24 @@ locals {
       -H 'Content-Type: application/json' \
       --data-binary @/tmp/index-config.json || true
     rm -f /tmp/index-config.json
+
+    # Create SQS file source for native S3 ingestion (with backpressure)
+    echo "Creating SQS file source..."
+    curl -sf -X POST http://localhost:7280/api/v1/indexes/filings/sources \
+      -H 'Content-Type: application/json' \
+      -d "{
+        \"version\": \"0.8\",
+        \"source_id\": \"sqs-filesource\",
+        \"source_type\": \"file\",
+        \"num_pipelines\": 2,
+        \"params\": {
+          \"notifications\": [{
+            \"type\": \"sqs\",
+            \"queue_url\": \"$SQS_QUEUE_URL\",
+            \"message_type\": \"s3_notification\"
+          }]
+        }
+      }" || true
 
     echo "Quickwit indexer boot complete"
     BOOTEOF
@@ -875,109 +894,6 @@ resource "aws_vpc_endpoint" "s3" {
   tags = {
     Name = "${var.name_prefix}-s3-endpoint"
   }
-}
-
-# -----------------------------------------------------------------------------
-# Lambda Ingest (SQS → S3 download → Quickwit ingest API)
-# -----------------------------------------------------------------------------
-
-resource "aws_iam_role" "lambda_ingest" {
-  name = "${var.name_prefix}-quickwit-ingest-lambda"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "lambda.amazonaws.com" }
-      Action    = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "lambda_ingest_s3" {
-  name = "s3-read"
-  role = aws_iam_role.lambda_ingest.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["s3:GetObject"]
-      Resource = ["arn:aws:s3:::${var.bucket_processed}/*"]
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "lambda_ingest_sqs" {
-  name = "sqs"
-  role = aws_iam_role.lambda_ingest.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "sqs:ReceiveMessage",
-        "sqs:DeleteMessage",
-        "sqs:GetQueueAttributes"
-      ]
-      Resource = var.sqs_queue_arn
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "lambda_ingest_ec2" {
-  name = "ec2-describe"
-  role = aws_iam_role.lambda_ingest.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["ec2:DescribeInstances"]
-      Resource = "*"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_ingest_basic" {
-  role       = aws_iam_role.lambda_ingest.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-data "archive_file" "ingest_lambda" {
-  type        = "zip"
-  source_file = "${path.module}/lambda/ingest.py"
-  output_path = "${path.module}/lambda/ingest.zip"
-}
-
-resource "aws_lambda_function" "ingest" {
-  filename         = data.archive_file.ingest_lambda.output_path
-  source_code_hash = data.archive_file.ingest_lambda.output_base64sha256
-  function_name    = "${var.name_prefix}-quickwit-ingest"
-  role             = aws_iam_role.lambda_ingest.arn
-  handler          = "ingest.handler"
-  runtime          = "python3.12"
-  timeout          = 300
-  memory_size      = 512
-
-  environment {
-    variables = {
-      INDEXER_TAG     = "${var.name_prefix}-quickwit-indexer"
-      AWS_REGION_NAME = data.aws_region.current.name
-    }
-  }
-
-  tags = {
-    Name = "${var.name_prefix}-quickwit-ingest"
-  }
-}
-
-resource "aws_lambda_event_source_mapping" "ingest_sqs" {
-  event_source_arn  = var.sqs_queue_arn
-  function_name     = aws_lambda_function.ingest.arn
-  batch_size        = 1
-  maximum_concurrency = 5
 }
 
 # -----------------------------------------------------------------------------

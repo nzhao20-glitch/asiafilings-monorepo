@@ -40,19 +40,22 @@ def list_jsonl_files(s3_client, bucket: str, prefix: str) -> list[str]:
     return keys
 
 
-def make_s3_notification(bucket: str, key: str) -> str:
+def make_s3_notification(bucket: str, key: str, region: str) -> str:
     """Build an S3 event notification message body for a single object."""
     return json.dumps({
         "Records": [{
+            "eventSource": "aws:s3",
+            "awsRegion": region,
+            "eventName": "ObjectCreated:Put",
             "s3": {
-                "bucket": {"name": bucket},
+                "bucket": {"name": bucket, "arn": f"arn:aws:s3:::{bucket}"},
                 "object": {"key": key}
             }
         }]
     })
 
 
-def send_messages(sqs_client, queue_url: str, bucket: str, keys: list[str]) -> int:
+def send_messages(sqs_client, queue_url: str, bucket: str, keys: list[str], region: str) -> int:
     """Send S3 notification messages to SQS in batches of 10."""
     sent = 0
     batch = []
@@ -60,7 +63,7 @@ def send_messages(sqs_client, queue_url: str, bucket: str, keys: list[str]) -> i
     for i, key in enumerate(keys):
         batch.append({
             'Id': str(i % 10),
-            'MessageBody': make_s3_notification(bucket, key),
+            'MessageBody': make_s3_notification(bucket, key, region),
         })
 
         if len(batch) == 10:
@@ -130,7 +133,7 @@ def main():
         return
 
     logger.info(f"Sending {len(keys)} messages to {args.queue_url}")
-    sent = send_messages(sqs_client, args.queue_url, args.bucket, keys)
+    sent = send_messages(sqs_client, args.queue_url, args.bucket, keys, args.region)
     logger.info(f"Done — sent {sent} messages")
 
 

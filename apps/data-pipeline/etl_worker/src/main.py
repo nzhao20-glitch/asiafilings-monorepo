@@ -52,12 +52,20 @@ logger = logging.getLogger(__name__)
 
 def get_config() -> dict:
     """Load configuration from environment variables."""
+    job_index = int(os.environ.get('AWS_BATCH_JOB_ARRAY_INDEX', '0'))
+    manifest_prefix = os.environ.get('MANIFEST_PREFIX', '')
+    manifest_key = os.environ.get('MANIFEST_KEY', '')
+
+    # Split-manifest mode: each job reads its own chunk CSV
+    if manifest_prefix:
+        manifest_key = f"{manifest_prefix}/chunk_{job_index:06d}.csv"
+
     return {
         'job_id': os.environ.get('AWS_BATCH_JOB_ID', f"local-{os.getpid()}"),
-        'job_index': int(os.environ.get('AWS_BATCH_JOB_ARRAY_INDEX', '0')),
+        'job_index': job_index,
         'chunk_size': int(os.environ.get('CHUNK_SIZE', '1000')),
         'manifest_bucket': os.environ.get('MANIFEST_BUCKET', ''),
-        'manifest_key': os.environ.get('MANIFEST_KEY', ''),
+        'manifest_key': manifest_key,
         'output_bucket': os.environ.get('OUTPUT_BUCKET', ''),
         'output_prefix': os.environ.get('OUTPUT_PREFIX', 'processed'),
         'exchange': os.environ.get('EXCHANGE', ''),
@@ -96,8 +104,13 @@ def process_batch(config: dict) -> dict:
     enable_dedup = config['enable_dedup']
 
     # Calculate row range for this batch
-    start_row = job_index * chunk_size
-    end_row = start_row + chunk_size
+    # Split-manifest mode: each chunk CSV contains only this job's rows
+    if os.environ.get('MANIFEST_PREFIX'):
+        start_row = 0
+        end_row = chunk_size
+    else:
+        start_row = job_index * chunk_size
+        end_row = start_row + chunk_size
 
     logger.info(f"Processing batch {job_index}: rows {start_row} to {end_row}")
 

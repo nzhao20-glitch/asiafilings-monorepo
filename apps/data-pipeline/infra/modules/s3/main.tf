@@ -77,7 +77,7 @@ resource "aws_sqs_queue" "quickwit_ingest" {
   # Dead letter queue for failed messages
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.quickwit_ingest_dlq.arn
-    maxReceiveCount     = 3
+    maxReceiveCount     = 5
   })
 }
 
