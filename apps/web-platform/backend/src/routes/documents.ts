@@ -2,7 +2,6 @@
  * Document Routes - Metadata and OCR bounding box endpoints
  *
  * Provides:
- * - POST /documents/:id/broken-pages  — update broken page list after ETL
  * - GET  /documents/:docId/metadata   — page count + broken pages for frontend
  * - GET  /documents/:docId/pages/:pageNum/ocr-bboxes — word-level OCR bbox JSON
  */
@@ -45,52 +44,6 @@ function parseDocId(docId: string): { exchange: string; sourceId: string } {
 }
 
 export default async function documentRoutes(fastify: FastifyInstance) {
-  // ── POST /documents/:id/broken-pages ─────────────────────────────────
-  // Called by the ETL pipeline after processing to record which pages need OCR
-  fastify.post<{
-    Params: { id: string };
-    Body: { broken_pages: number[] };
-  }>('/documents/:id/broken-pages', {
-    schema: {
-      description: 'Update broken pages list for a filing',
-      tags: ['documents'],
-      params: {
-        type: 'object',
-        properties: { id: { type: 'string' } },
-        required: ['id'],
-      },
-      body: {
-        type: 'object',
-        properties: {
-          broken_pages: {
-            type: 'array',
-            items: { type: 'integer' },
-          },
-        },
-        required: ['broken_pages'],
-      },
-    },
-  }, async (request, reply) => {
-    try {
-      const { exchange, sourceId } = parseDocId(request.params.id);
-      const { broken_pages } = request.body;
-
-      await prisma.$executeRaw`
-        UPDATE filings
-        SET broken_pages = ${broken_pages}
-        WHERE exchange = ${exchange} AND source_id = ${sourceId}
-      `;
-
-      return { success: true, data: { exchange, sourceId, broken_pages } };
-    } catch (error) {
-      fastify.log.error(error);
-      return reply.status(500).send({
-        success: false,
-        error: { code: 'INTERNAL_ERROR', message: 'Failed to update broken pages' },
-      });
-    }
-  });
-
   // ── GET /documents/:docId/metadata ───────────────────────────────────
   // Returns page count and broken page numbers for the frontend viewer
   fastify.get<{

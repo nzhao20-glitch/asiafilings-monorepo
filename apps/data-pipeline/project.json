@@ -21,7 +21,7 @@
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "python3 -m py_compile etl_worker/src/main.py && python3 -m py_compile etl_worker/src/extractor.py && python3 -m py_compile etl_worker/src/s3_utils.py && python3 -m py_compile etl_worker/src/dynamo_utils.py && echo 'All modules compile OK'",
+        "command": "python3 -m py_compile etl_worker/src/main.py && python3 -m py_compile etl_worker/src/extractor.py && python3 -m py_compile etl_worker/src/s3_utils.py && python3 -m py_compile etl_worker/src/dynamo_utils.py && python3 -m py_compile etl_worker/src/db_utils.py && python3 -m py_compile etl_worker/src/ocr_queue.py && python3 -m py_compile etl_worker/src/ocr_worker.py && echo 'All modules compile OK'",
         "cwd": "apps/data-pipeline"
       }
     },

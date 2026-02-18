@@ -1,6 +1,6 @@
 # Filing ETL Pipeline
 
-Extract text from document filings (DART, HKEX, SEC) at scale using AWS Batch, with full-text search via Quickwit.
+Extract text from document filings (DART, HKEX, SEC) at scale using AWS Batch, with async OCR on ECS/Fargate Spot and full-text search via Quickwit.
 
 ## Supported File Types
 
@@ -24,12 +24,13 @@ Extract text from document filings (DART, HKEX, SEC) at scale using AWS Batch, w
 │  ├── hkex/{company}/{date}/{id}.pdf ──┼──► AWS Batch (ETL Worker)  │
 │  └── hkex/{company}/{date}/{id}.htm ──┘    PyMuPDF / BeautifulSoup │
 │                                       │                             │
-│  PostgreSQL (manifest metadata) ──────┘                             │
+│  PostgreSQL (manifest metadata + broken_pages) ─────┐               │
 │                                                                     │
-│                            │                                        │
-│                            ▼                                        │
+│  broken_pages ─► OCR SQS ─► ECS OCR Worker (Fargate Spot) ─┐       │
+│                                                             ▼       │
 │  filing-extractions-128638789653/                                   │
-│  └── processed/{exchange}/batch_000001.jsonl ──► SQS ──► Quickwit  │
+│  ├── processed/{exchange}/batch_000001.jsonl ──► SQS ──► Quickwit  │
+│  └── ocr-bboxes/{exchange}/{source_id}/page_{n}.json               │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -40,12 +41,14 @@ Extract text from document filings (DART, HKEX, SEC) at scale using AWS Batch, w
 filing-etl-pipeline/
 ├── etl_worker/           # Python extraction worker
 │   ├── src/
-│   │   ├── extractor.py  # PyMuPDF/BS4 text extraction
+│   │   ├── extractor.py  # Text extraction + gibberish detection
+│   │   ├── ocr_queue.py  # OCR SQS publisher
+│   │   ├── ocr_worker.py # OCR queue consumer runtime
 │   │   ├── s3_utils.py   # S3 download/upload helpers
 │   │   └── main.py       # Batch job entry point
 │   ├── Dockerfile
 │   └── requirements.txt
-├── infrastructure/       # Terraform (Batch, S3, Quickwit EC2)
+├── infra/                # Terraform (Batch, OCR ECS, S3, Quickwit EC2)
 ├── search_config/        # Quickwit index schema
 └── scripts/              # Manifest generation & job triggers
 ```
@@ -55,7 +58,7 @@ filing-etl-pipeline/
 ### 1. Deploy Infrastructure
 
 ```bash
-cd infrastructure
+cd infra
 cp terraform.tfvars.example terraform.tfvars
 # Edit terraform.tfvars with your values
 terraform init && terraform apply
@@ -184,11 +187,22 @@ curl "http://quickwit:7280/api/v1/filings/search" \
 | `OUTPUT_PREFIX` | Prefix for JSONL files | `processed` |
 | `EXCHANGE` | Exchange identifier | optional |
 | `CHUNK_SIZE` | Files per batch job | `1000` |
+| `ENABLE_INLINE_OCR` | Run OCR inside ETL extraction path | `false` |
+| `ENABLE_OCR_QUEUE` | Publish OCR jobs for broken pages | `true` |
+| `OCR_QUEUE_URL` | OCR SQS queue URL | empty |
+| `OCR_PAGE_CHUNK_SIZE` | Broken pages per OCR message | `10` |
+| `OCR_OUTPUT_BUCKET` | Bucket for OCR bbox JSON writes | `OUTPUT_BUCKET` |
+| `OCR_QUEUE_WAIT_SECONDS` | SQS long poll wait (OCR worker) | `20` |
+| `OCR_QUEUE_VISIBILITY_TIMEOUT` | Message visibility timeout (OCR worker) | `900` |
+| `ENABLE_GIBBERISH_METRICS` | Publish CloudWatch metric for gibberish pages | `true` |
+| `GIBBERISH_METRIC_NAMESPACE` | CloudWatch namespace for gibberish metric | `AsiaFilings/DataPipeline` |
+| `GIBBERISH_METRIC_NAME` | CloudWatch metric name for gibberish pages | `GibberishPagesDetected` |
 
 ## Infrastructure
 
 - **AWS Batch**: Fargate Spot compute (cost-effective)
+- **ECS/Fargate Spot OCR Worker**: scales 0..N from OCR queue depth
 - **S3**: Source PDFs + extraction outputs
-- **SQS**: Notifications for Quickwit ingestion
+- **SQS**: Quickwit ingest queue + OCR queue + OCR DLQ
+- **CloudWatch Alarms**: OCR queue age + OCR DLQ depth
 - **Quickwit**: Full-text search on EC2 (t3.medium)
-

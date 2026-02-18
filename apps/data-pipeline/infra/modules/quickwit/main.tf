@@ -547,9 +547,9 @@ locals {
 }
 
 resource "aws_launch_template" "indexer" {
-  name_prefix   = "${var.name_prefix}-quickwit-indexer-"
-  image_id      = data.aws_ami.ubuntu_arm64.id
-  key_name      = var.key_pair != "" ? var.key_pair : null
+  name_prefix = "${var.name_prefix}-quickwit-indexer-"
+  image_id    = data.aws_ami.ubuntu_arm64.id
+  key_name    = var.key_pair != "" ? var.key_pair : null
 
   iam_instance_profile {
     name = aws_iam_instance_profile.indexer.name
@@ -779,9 +779,9 @@ locals {
 }
 
 resource "aws_launch_template" "searcher" {
-  name_prefix   = "${var.name_prefix}-quickwit-searcher-"
-  image_id      = data.aws_ami.ubuntu_arm64.id
-  key_name      = var.key_pair != "" ? var.key_pair : null
+  name_prefix = "${var.name_prefix}-quickwit-searcher-"
+  image_id    = data.aws_ami.ubuntu_arm64.id
+  key_name    = var.key_pair != "" ? var.key_pair : null
 
   iam_instance_profile {
     name = aws_iam_instance_profile.searcher.name

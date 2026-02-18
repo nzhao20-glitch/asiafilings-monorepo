@@ -52,6 +52,35 @@ variable "enable_job_tracking" {
   default = false
 }
 
+variable "database_url" {
+  type = string
+}
+
+variable "enable_inline_ocr" {
+  type    = bool
+  default = false
+}
+
+variable "enable_ocr_queue" {
+  type    = bool
+  default = true
+}
+
+variable "ocr_queue_url" {
+  type    = string
+  default = ""
+}
+
+variable "ocr_queue_arn" {
+  type    = string
+  default = ""
+}
+
+variable "ocr_page_chunk_size" {
+  type    = number
+  default = 10
+}
+
 # Security Group for Batch Jobs
 resource "aws_security_group" "batch" {
   name        = "${var.name_prefix}-batch"
@@ -164,7 +193,7 @@ resource "aws_iam_role_policy" "batch_job_s3" {
   })
 }
 
-# CloudWatch Logs Policy for Batch Job
+# CloudWatch Logs + Metrics Policy for Batch Job
 resource "aws_iam_role_policy" "batch_job_logs" {
   name = "${var.name_prefix}-batch-job-logs"
   role = aws_iam_role.batch_job.id
@@ -177,6 +206,13 @@ resource "aws_iam_role_policy" "batch_job_logs" {
         Action = [
           "logs:CreateLogStream",
           "logs:PutLogEvents"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:PutMetricData"
         ]
         Resource = "*"
       }
@@ -205,6 +241,29 @@ resource "aws_iam_role_policy" "batch_job_dynamodb" {
           "arn:aws:dynamodb:*:*:table/${var.name_prefix}-jobs",
           "arn:aws:dynamodb:*:*:table/${var.name_prefix}-errors",
           "arn:aws:dynamodb:*:*:table/${var.name_prefix}-dedup"
+        ]
+      }
+    ]
+  })
+}
+
+# SQS Policy for Batch Job (OCR queue publishing)
+resource "aws_iam_role_policy" "batch_job_ocr_queue" {
+  count = var.enable_ocr_queue ? 1 : 0
+
+  name = "${var.name_prefix}-batch-job-ocr-queue"
+  role = aws_iam_role.batch_job.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage"
+        ]
+        Resource = [
+          var.ocr_queue_arn
         ]
       }
     ]
@@ -277,6 +336,11 @@ resource "aws_batch_job_definition" "etl_worker" {
       { name = "CHUNK_SIZE", value = tostring(var.chunk_size) },
       { name = "OUTPUT_BUCKET", value = var.bucket_processed },
       { name = "OUTPUT_PREFIX", value = "processed" },
+      { name = "DATABASE_URL", value = var.database_url },
+      { name = "ENABLE_INLINE_OCR", value = tostring(var.enable_inline_ocr) },
+      { name = "ENABLE_OCR_QUEUE", value = tostring(var.enable_ocr_queue) },
+      { name = "OCR_QUEUE_URL", value = var.ocr_queue_url },
+      { name = "OCR_PAGE_CHUNK_SIZE", value = tostring(var.ocr_page_chunk_size) },
       { name = "LOG_LEVEL", value = "INFO" }
       ], var.enable_job_tracking ? [
       { name = "ENABLE_JOB_TRACKING", value = "true" },

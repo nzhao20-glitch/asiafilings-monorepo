@@ -47,3 +47,38 @@ output "dynamodb_dedup_table" {
   description = "DynamoDB table for dedup tracking across pipelines"
   value       = module.dynamodb.dedup_table_name
 }
+
+output "ocr_queue_url" {
+  description = "SQS queue URL for async OCR jobs"
+  value       = module.ocr_worker.ocr_queue_url
+}
+
+output "ocr_queue_arn" {
+  description = "SQS queue ARN for async OCR jobs"
+  value       = module.ocr_worker.ocr_queue_arn
+}
+
+output "ocr_dlq_url" {
+  description = "SQS DLQ URL for async OCR jobs"
+  value       = module.ocr_worker.ocr_dlq_url
+}
+
+output "ocr_service_name" {
+  description = "ECS service name for OCR workers"
+  value       = module.ocr_worker.ocr_service_name
+}
+
+output "ocr_cluster_name" {
+  description = "ECS cluster name for OCR workers"
+  value       = module.ocr_worker.ocr_cluster_name
+}
+
+output "ocr_queue_age_alarm_name" {
+  description = "CloudWatch alarm name for OCR queue age"
+  value       = module.ocr_worker.ocr_queue_age_alarm_name
+}
+
+output "ocr_dlq_alarm_name" {
+  description = "CloudWatch alarm name for OCR DLQ message depth"
+  value       = module.ocr_worker.ocr_dlq_alarm_name
+}

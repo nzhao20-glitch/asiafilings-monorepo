@@ -9,20 +9,36 @@ aws_region   = "ap-east-1"
 bucket_raw       = "pdfs-128638789653"
 # Extraction output bucket (will be created if create_buckets=true)
 bucket_processed = "filing-extractions-128638789653"
-create_buckets   = true
+create_buckets   = false
 
 # Batch Configuration
 ecr_image_uri = "123456789012.dkr.ecr.ap-east-1.amazonaws.com/filing-etl:latest"
 batch_vcpus   = 1
 batch_memory  = 2048
 chunk_size    = 1000
+enable_inline_ocr = false
+enable_ocr_queue  = true
+ocr_page_chunk_size = 10
+
+# OCR Worker autoscaling
+ocr_worker_cpu                      = 1024
+ocr_worker_memory                   = 2048
+ocr_max_tasks                       = 128
+ocr_messages_per_task               = 1
+ocr_queue_visibility_timeout_seconds = 1200
+ocr_queue_receive_wait_seconds      = 20
+ocr_dlq_max_receive_count           = 5
+enable_ocr_alarms                   = true
+ocr_queue_age_alarm_threshold_seconds = 900
+ocr_dlq_alarm_threshold             = 0
+ocr_alarm_sns_topic_arn             = ""
 
 # Quickwit Configuration
-quickwit_indexer_instance_type  = "t4g.medium"
-quickwit_searcher_instance_type = "r7gd.xlarge"
+quickwit_indexer_instance_types  = ["t4g.medium", "t4g.large"]
+quickwit_searcher_instance_types = ["r7gd.xlarge", "m6gd.xlarge"]
 quickwit_key_pair               = ""
 quickwit_version                = "0.8.1"
-postgres_password               = "change-me-to-a-strong-password"
+rds_password                    = "change-me-to-a-strong-password"
 
 # Network Configuration
 vpc_id     = "vpc-xxxxxxxxx"

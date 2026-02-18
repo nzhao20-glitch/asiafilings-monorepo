@@ -12,9 +12,13 @@ Environment Variables:
     OUTPUT_BUCKET: S3 bucket for processed JSONL output
     OUTPUT_PREFIX: S3 key prefix for output files (default: 'processed')
     EXCHANGE: Exchange identifier (optional, e.g., 'DART', 'HKEX')
+    DATABASE_URL: PostgreSQL connection URL for broken_pages updates (optional)
     METADATA_BUCKET: S3 bucket for metadata lookup JSON (optional)
     METADATA_KEY: S3 key for metadata lookup JSON (optional)
     ENABLE_JOB_TRACKING: Set to 'true' to enable DynamoDB job tracking
+    ENABLE_OCR_QUEUE: Set to 'true' to enqueue OCR jobs for broken pages
+    OCR_QUEUE_URL: SQS queue URL for OCR jobs
+    OCR_PAGE_CHUNK_SIZE: Broken page count per OCR message (default: 10)
     LOG_LEVEL: Logging level (default: 'INFO')
 """
 
@@ -24,6 +28,7 @@ import os
 import sys
 from pathlib import Path
 
+from db_utils import update_broken_pages
 from dynamo_utils import (
     batch_check_processed,
     batch_record_processed,
@@ -33,6 +38,7 @@ from dynamo_utils import (
     record_job_start,
 )
 from extractor import process_document_bytes
+from ocr_queue import enqueue_ocr_jobs
 from s3_utils import (
     download_pdf_bytes,
     get_s3_client,
@@ -100,6 +106,7 @@ def process_batch(config: dict) -> dict:
     job_index = config['job_index']
     chunk_size = config['chunk_size']
     exchange = config['exchange'] or None
+    database_url = os.environ.get('DATABASE_URL', '').strip()
     enable_tracking = config['enable_tracking']
     enable_dedup = config['enable_dedup']
 
@@ -122,6 +129,8 @@ def process_batch(config: dict) -> dict:
         'files_failed': 0,
         'files_skipped': 0,
         'pages_extracted': 0,
+        'broken_pages_detected': 0,
+        'ocr_jobs_enqueued': 0,
     }
 
     # Load optional metadata lookup
@@ -185,7 +194,7 @@ def process_batch(config: dict) -> dict:
                 file_metadata.update(metadata_lookup[source_id])
 
             # Process document - auto-detects PDF/HTML and extracts text
-            pages, error = process_document_bytes(
+            pages, error, broken_pages = process_document_bytes(
                 doc_bytes,
                 filename,
                 s3_key=key,
@@ -193,6 +202,32 @@ def process_batch(config: dict) -> dict:
                 document_id=source_id,
                 metadata=file_metadata
             )
+
+            if broken_pages and database_url:
+                doc_exchange = exchange or str(file_metadata.get('exchange') or '').upper()
+                if doc_exchange:
+                    update_broken_pages(doc_exchange, source_id, broken_pages)
+
+            if broken_pages:
+                stats['broken_pages_detected'] += len(broken_pages)
+                doc_exchange = exchange or str(file_metadata.get('exchange') or '').upper()
+                if doc_exchange:
+                    try:
+                        stats['ocr_jobs_enqueued'] += enqueue_ocr_jobs(
+                            exchange=doc_exchange,
+                            source_id=source_id,
+                            s3_bucket=bucket,
+                            s3_key=key,
+                            broken_pages=broken_pages,
+                            metadata=file_metadata,
+                        )
+                    except Exception as queue_error:
+                        logger.warning(
+                            "Failed to enqueue OCR jobs for %s:%s: %s",
+                            doc_exchange,
+                            source_id,
+                            queue_error,
+                        )
 
             if error:
                 if enable_tracking:
