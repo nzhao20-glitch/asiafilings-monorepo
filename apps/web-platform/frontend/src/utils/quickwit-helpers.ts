@@ -23,7 +23,7 @@ export interface FilingResult {
  * Maps backend FilingSearchResult[] to camelCase FilingResult[].
  */
 export function toFilingResults(results: FilingSearchResult[]): FilingResult[] {
-  return results.map((r) => {
+  const mapped = results.map((r) => {
     const matches: PageMatch[] = r.matched_pages.map((mp) => ({
       pageNumber: mp.page_number,
       snippet: mp.snippet,
@@ -41,5 +41,17 @@ export function toFilingResults(results: FilingSearchResult[]): FilingResult[] {
       matchedPages: matches.map((m) => m.pageNumber),
       matchedPageCount: matches.length,
     };
+  });
+
+  // Ensure UI consistently shows newest filings first.
+  return mapped.sort((a, b) => {
+    const aTime = Date.parse(a.filingDate);
+    const bTime = Date.parse(b.filingDate);
+
+    if (Number.isNaN(aTime) && Number.isNaN(bTime)) return 0;
+    if (Number.isNaN(aTime)) return 1;
+    if (Number.isNaN(bTime)) return -1;
+
+    return bTime - aTime;
   });
 }
