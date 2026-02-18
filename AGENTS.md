@@ -13,6 +13,23 @@
 
 <!-- nx configuration end-->
 
+## Nx Sandbox Notes
+
+In some sandboxed environments, Nx daemon/plugin workers can fail to open local Unix sockets and commands may appear to hang before failing.
+
+Use the workspace-safe wrapper for Nx commands:
+
+```bash
+npm run nx:safe -- run data-pipeline:lint
+npm run nx:safe -- run-many -t lint
+```
+
+Equivalent direct command:
+
+```bash
+NX_DAEMON=false NX_ISOLATE_PLUGINS=false npx nx run data-pipeline:lint
+```
+
 ## Imported CLAUDE.md Content
 
 ### Source: CLAUDE.md (repo root)
