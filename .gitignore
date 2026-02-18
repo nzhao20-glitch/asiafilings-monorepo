@@ -81,3 +81,14 @@ id_ed25519
 # Generated secret upload scripts (contain secret values)
 tools/scripts/upload-secrets.sh
 node_modules
+
+# Python build/cache artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local OCR/debug artifacts
+artifacts/
+gibberish_report.json
+=1.24.0
