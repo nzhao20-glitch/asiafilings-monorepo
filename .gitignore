@@ -80,3 +80,4 @@ id_ed25519
 
 # Generated secret upload scripts (contain secret values)
 tools/scripts/upload-secrets.sh
+node_modules
