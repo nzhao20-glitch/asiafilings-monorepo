@@ -14,6 +14,14 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  backend "s3" {
+    bucket         = "asiafilings-terraform-state"
+    key            = "core/terraform.tfstate"
+    region         = "ap-east-1"
+    dynamodb_table = "asiafilings-terraform-lock"
+    encrypt        = true
+  }
 }
 
 provider "aws" {

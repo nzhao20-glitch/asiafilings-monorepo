@@ -143,7 +143,8 @@ export function DocumentSearchPopup({ query, companyName, companyId, exchange, o
 
 
 
-  const pdfUrl = selectedFiling ? `/api/files/${selectedFiling.s3Key}` : '';
+  const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
+  const pdfUrl = selectedFiling ? `${API_URL}/api/files/${selectedFiling.s3Key}` : '';
 
   const formatDate = (dateStr: string) => {
     try {

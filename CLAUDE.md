@@ -46,9 +46,43 @@ Each app owns its own IaC for app-specific resources. Shared resources (VPC, S3,
 
 | App | Infra Path | Resources |
 |-----|-----------|-----------|
-| web-platform | `apps/web-platform/infra/` | Terraform (ECS, ALB, ECR, S3), EC2 deploy scripts, nginx config |
+| web-platform | `apps/web-platform/infra/` | Terraform (EC2, EIP, security groups), deploy scripts, nginx config |
 | serverless-functions | `apps/serverless-functions/infra/` | Terraform modules (Lambda, Step Functions, EventBridge, SQS) |
 | data-pipeline | `apps/data-pipeline/infra/` | Terraform modules (Batch, DynamoDB, Quickwit, S3 notifications) |
+
+## Terraform State Management
+
+All Terraform roots use a shared S3 backend with DynamoDB locking. State files are versioned in S3 — no local `.tfstate` files.
+
+**Backend resources (ap-east-1):**
+- S3 bucket: `asiafilings-terraform-state` (versioned, encrypted, public access blocked)
+- DynamoDB table: `asiafilings-terraform-lock` (prevents concurrent applies)
+
+| Terraform Root | State Key |
+|----------------|-----------|
+| `infrastructure/core/` | `core/terraform.tfstate` |
+| `apps/serverless-functions/infra/environments/prod/` | `serverless-functions/terraform.tfstate` |
+| `apps/data-pipeline/infra/` | `data-pipeline/terraform.tfstate` |
+| `apps/web-platform/infra/terraform/` | `web-platform/terraform.tfstate` |
+
+### Workflow: Making Infrastructure Changes
+
+```bash
+# 1. Navigate to the Terraform root
+cd apps/web-platform/infra/terraform  # (or any root above)
+
+# 2. Initialize — downloads providers and connects to the S3 backend
+#    (only needed once per machine, or after backend/provider changes)
+terraform init
+
+# 3. Preview changes — reads current state from S3, compares to config
+terraform plan
+
+# 4. Apply changes — acquires DynamoDB lock, applies, writes state to S3
+terraform apply
+```
+
+`terraform init` pulls state from S3 automatically — there is no manual step to "download" state. The DynamoDB lock ensures only one person can `apply` at a time.
 
 ## Secret Management (AWS SSM Parameter Store)
 
