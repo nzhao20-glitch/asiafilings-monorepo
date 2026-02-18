@@ -160,6 +160,9 @@ export const buildApp = async () => {
   await fastify.register(searchRoutes.default, { prefix: '/api' });
   await fastify.register(filesRoutes.default, { prefix: '/api' });
 
+  const documentRoutes = await import('./routes/documents');
+  await fastify.register(documentRoutes.default, { prefix: '/api' });
+
   const quickwitSearchRoutes = await import('./routes/quickwit-search');
   await fastify.register(quickwitSearchRoutes.default, { prefix: '/api' });
 

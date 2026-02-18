@@ -1,18 +1,31 @@
 """Document extraction module supporting PDF and HTML files.
 
 Uses pymupdf for PDF text extraction and BeautifulSoup for HTML.
+Falls back to Tesseract OCR for pages with broken/gibberish text encoding.
 Requires Python 3.10+ and: pip install pymupdf
 """
 
 import gzip
+import json
 import logging
 import re
+import unicodedata
 from typing import Dict, List, Optional, Tuple
 
 import pymupdf
 from bs4 import BeautifulSoup
 
+from s3_utils import upload_json
+
 logger = logging.getLogger(__name__)
+
+# S3 bucket for extracted data (OCR bboxes, etc.)
+EXTRACTION_BUCKET = 'filing-extractions-128638789653'
+
+# Gibberish detection thresholds
+_GIBBERISH_REPLACEMENT_RATIO = 0.05  # >5% replacement chars → gibberish
+_GIBBERISH_UNPRINTABLE_RATIO = 0.10  # >10% non-printable (excl whitespace) → gibberish
+_MIN_TEXT_LENGTH = 20  # Pages with less text skip gibberish check (likely blank)
 
 
 def decompress_if_gzip(data: bytes) -> bytes:
@@ -139,13 +152,85 @@ def process_html_bytes(
     return [page_data], None
 
 
-def _extract_page_text(page) -> str:
-    """Extract text from a pymupdf page.
+def is_gibberish(text: str) -> bool:
+    """Detect if extracted text is gibberish from broken PDF font encoding.
+
+    Checks for:
+    1. High ratio of U+FFFD replacement characters
+    2. High ratio of non-printable / control characters (excluding whitespace)
+    3. High ratio of Private Use Area codepoints (U+E000–U+F8FF)
+
+    Returns True if the text appears to be garbled/unmapped glyphs.
+    """
+    if len(text.strip()) < _MIN_TEXT_LENGTH:
+        return False  # Too short to judge; likely a blank or near-blank page
+
+    total = len(text)
+
+    # Count replacement characters (U+FFFD)
+    replacement_count = text.count('\ufffd')
+    if replacement_count / total > _GIBBERISH_REPLACEMENT_RATIO:
+        return True
+
+    # Count non-printable chars and Private Use Area codepoints
+    bad_count = 0
+    for ch in text:
+        if ch in (' ', '\t', '\n', '\r'):
+            continue
+        cat = unicodedata.category(ch)
+        # Cc = control, Cn = unassigned, Co = private use, Cs = surrogate
+        if cat in ('Cc', 'Cn', 'Co', 'Cs'):
+            bad_count += 1
+
+    if bad_count / total > _GIBBERISH_UNPRINTABLE_RATIO:
+        return True
+
+    return False
+
+
+def _extract_page_text(page) -> Dict:
+    """Extract text from a pymupdf page, falling back to OCR if needed.
 
     Returns:
-        The full page text.
+        Dict with keys: text, ocr_required, and optionally ocr_bboxes.
     """
-    return page.get_text("text")
+    text = page.get_text("text")
+
+    if not is_gibberish(text):
+        return {"text": text, "ocr_required": False}
+
+    # Text is gibberish — fall back to Tesseract OCR via pymupdf
+    logger.info(f"Page {page.number + 1}: gibberish detected, running OCR")
+    try:
+        tp = page.get_textpage_ocr(
+            tessdata="/usr/share/tessdata",
+            language="eng+chi_tra",
+            full=True,  # Force full-page raster OCR; without this PyMuPDF reuses broken embedded text
+        )
+        ocr_text = page.get_text("text", textpage=tp)
+
+        # Extract word-level bounding boxes
+        words = page.get_text("words", textpage=tp)
+        ocr_bboxes = [
+            {
+                "x0": round(w[0], 1),
+                "y0": round(w[1], 1),
+                "x1": round(w[2], 1),
+                "y1": round(w[3], 1),
+                "word": w[4],
+            }
+            for w in words
+        ]
+
+        return {
+            "text": ocr_text,
+            "ocr_required": True,
+            "ocr_bboxes": ocr_bboxes,
+        }
+    except Exception as e:
+        logger.error(f"OCR failed on page {page.number + 1}: {e}")
+        # Return original (gibberish) text as fallback, still mark as broken
+        return {"text": text, "ocr_required": True, "ocr_bboxes": []}
 
 
 def process_pdf_bytes(
@@ -194,9 +279,10 @@ def process_pdf_bytes(
     try:
         total_pages = len(doc)
         exch = merged_meta.get('exchange', '')
+        broken_pages = []
 
         for page_num, page in enumerate(doc, start=1):
-            text = _extract_page_text(page)
+            extraction = _extract_page_text(page)
 
             unique_page_id = f"{exch}_{doc_id}_pg{page_num}" if exch else f"{doc_id}_pg{page_num}"
 
@@ -205,7 +291,8 @@ def process_pdf_bytes(
                 "document_id": doc_id,
                 "page_number": page_num,
                 "total_pages": total_pages,
-                "text": text,
+                "text": extraction["text"],
+                "ocr_required": extraction["ocr_required"],
                 "s3_key": s3_key or "",
                 "file_type": "pdf",
             }
@@ -214,12 +301,28 @@ def process_pdf_bytes(
                 if merged_meta.get(key):
                     result_page[key] = merged_meta[key]
 
+            # Upload OCR bounding boxes to S3 for pages that needed OCR
+            if extraction["ocr_required"]:
+                broken_pages.append(page_num)
+                bboxes = extraction.get("ocr_bboxes", [])
+                if bboxes:
+                    bbox_key = f"ocr-bboxes/{exch.lower()}/{doc_id}/page_{page_num}.json"
+                    upload_json(EXTRACTION_BUCKET, bbox_key, bboxes)
+
             pages_result.append(result_page)
 
     finally:
         doc.close()
 
-    logger.info(f"Extracted {len(pages_result)} pages from {filename}")
+    ocr_count = len(broken_pages)
+    if ocr_count > 0:
+        logger.info(
+            f"Extracted {len(pages_result)} pages from {filename} "
+            f"({ocr_count} pages required OCR: {broken_pages})"
+        )
+    else:
+        logger.info(f"Extracted {len(pages_result)} pages from {filename}")
+
     return pages_result, None
 
 

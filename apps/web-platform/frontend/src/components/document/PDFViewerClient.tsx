@@ -8,6 +8,7 @@ import { List } from 'react-window';
 import { HighlightOverlay } from './HighlightOverlay';
 import { CustomTextLayer } from './CustomTextLayer';
 import { encodeHighlight, decodeHighlight, type HighlightData } from '@/src/utils/highlight-encoding';
+import { documentOcrApi } from '@/src/services/api';
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
 import 'react-pdf/dist/esm/Page/TextLayer.css';
 
@@ -86,12 +87,16 @@ const PDFPageMemo = memo(({
   width,
   height,
   searchQuery,
+  isBrokenPage,
+  docId,
 }: {
   pageNumber: number;
   onLoadSuccess: (page: any) => void;
   width: number;
   height: number;
   searchQuery?: string;
+  isBrokenPage?: boolean;
+  docId?: string;
 }) => {
   const [canvasRenderComplete, setCanvasRenderComplete] = useState(false);
   const [pageProxy, setPageProxy] = useState<any>(null);
@@ -137,6 +142,9 @@ const PDFPageMemo = memo(({
             scale={scale}
             canvasRenderComplete={canvasRenderComplete}
             searchQuery={searchQuery}
+            isBrokenPage={isBrokenPage}
+            docId={docId}
+            pageNumber={pageNumber}
           />
         )}
       </Page>
@@ -196,6 +204,9 @@ export function PDFViewerClient({ fileUrl, filingId, searchQuery = '', searchTri
   // Store per-page scale factors for normalizing different page sizes to consistent width
   const [pageScaleFactors, setPageScaleFactors] = useState<Record<number, number>>({});
   const pageScaleFactorsRef = useRef<Record<number, number>>({});
+
+  // Broken pages set — pages where PDF.js text extraction is gibberish
+  const [brokenPages, setBrokenPages] = useState<Set<number>>(new Set());
 
   // Track current visible page for link sharing and page counter display
   const [currentVisiblePage, setCurrentVisiblePage] = useState(1);
@@ -591,6 +602,18 @@ export function PDFViewerClient({ fileUrl, filingId, searchQuery = '', searchTri
       }
     } catch (error) {
       console.error('Failed to extract outline:', error);
+    }
+
+    // Fetch document metadata to identify broken pages (non-blocking)
+    if (filingId) {
+      documentOcrApi.getMetadata(filingId).then((meta) => {
+        if (meta.broken_pages && meta.broken_pages.length > 0) {
+          setBrokenPages(new Set(meta.broken_pages));
+        }
+      }).catch((err) => {
+        // Non-fatal: if metadata fetch fails, all pages use native text layer
+        console.warn('Failed to fetch document metadata:', err);
+      });
     }
 
     // Pre-calculate all page heights for accurate scroll positioning
@@ -1082,6 +1105,8 @@ export function PDFViewerClient({ fileUrl, filingId, searchQuery = '', searchTri
     getPageLoadCallback: (pageNumber: number) => (page: any) => void;
     searchQuery: string;
     activeHighlight: HighlightData | null;
+    brokenPages: Set<number>;
+    docId?: string;
   }) => {
     const pageNum = props.index + 1;
 
@@ -1094,6 +1119,9 @@ export function PDFViewerClient({ fileUrl, filingId, searchQuery = '', searchTri
     // Check if this page has the active highlight
     const pageHighlight = props.activeHighlight?.pageNumber === pageNum ? props.activeHighlight : null;
 
+    // Check if this page has broken text extraction
+    const isBrokenPage = props.brokenPages.has(pageNum);
+
     return (
       <div style={{ ...props.style, display: 'flex', justifyContent: 'center' }} {...props.ariaAttributes}>
         <div className="relative shadow-lg mb-4" style={{ width: 'fit-content' }}>
@@ -1104,6 +1132,8 @@ export function PDFViewerClient({ fileUrl, filingId, searchQuery = '', searchTri
               width={pageWidth}
               height={pageHeight}
               searchQuery={props.searchQuery}
+              isBrokenPage={isBrokenPage}
+              docId={props.docId}
             />
 
             {/* URL-based highlight overlay (coordinate-based, from shared links) */}
@@ -1132,7 +1162,9 @@ export function PDFViewerClient({ fileUrl, filingId, searchQuery = '', searchTri
     getPageLoadCallback,
     searchQuery,
     activeHighlight,
-  }), [pageWidths, pageHeights, pageScaleFactors, getPageLoadCallback, searchQuery, activeHighlight]) as any;
+    brokenPages,
+    docId: filingId,
+  }), [pageWidths, pageHeights, pageScaleFactors, getPageLoadCallback, searchQuery, activeHighlight, brokenPages, filingId]) as any;
 
   return (
     <div className="h-full w-full bg-gray-100">

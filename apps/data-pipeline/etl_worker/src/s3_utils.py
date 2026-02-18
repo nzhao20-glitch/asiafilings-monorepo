@@ -82,15 +82,15 @@ def upload_jsonl(
 def upload_json(
     bucket: str,
     key: str,
-    data: dict,
+    data,
     client=None
 ) -> bool:
-    """Upload a single JSON object to S3.
+    """Upload JSON-serializable data to S3.
 
     Args:
         bucket: S3 bucket name
         key: S3 object key
-        data: Dictionary to write as JSON
+        data: JSON-serializable object (dict, list, etc.)
         client: Optional pre-configured S3 client
 
     Returns:

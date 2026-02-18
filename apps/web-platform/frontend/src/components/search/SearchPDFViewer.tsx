@@ -4,8 +4,9 @@ import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/esm/Page/TextLayer.css';
 import { List } from 'react-window';
-import { HighlightOverlay } from '@/src/components/document/HighlightOverlay';
+import { CustomTextLayer } from '@/src/components/document/CustomTextLayer';
 import { encodeHighlight } from '@/src/utils/highlight-encoding';
+import { documentOcrApi } from '@/src/services/api';
 
 // Configure PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -44,22 +45,54 @@ const copyToClipboard = async (text: string): Promise<boolean> => {
 
 /**
  * Memoized search page component.
- * Text layer is left untouched - search highlights are rendered as overlays.
+ * Uses CustomTextLayer for pixel-perfect search highlighting via <mark> elements.
  */
 const SearchPageMemo = memo(({
   pageNumber,
   pdfScale,
+  searchQuery,
+  isBrokenPage,
+  docId,
 }: {
   pageNumber: number;
   pdfScale: number;
+  searchQuery?: string;
+  isBrokenPage?: boolean;
+  docId?: string;
 }) => {
+  const [canvasRenderComplete, setCanvasRenderComplete] = useState(false);
+  const [pageProxy, setPageProxy] = useState<any>(null);
+
+  const handleLoadSuccess = useCallback((page: any) => {
+    setPageProxy(page);
+    setCanvasRenderComplete(false);
+  }, []);
+
+  const handleRenderSuccess = useCallback(() => {
+    setCanvasRenderComplete(true);
+  }, []);
+
   return (
     <Page
       pageNumber={pageNumber}
       scale={pdfScale}
-      renderTextLayer={true}
+      onLoadSuccess={handleLoadSuccess}
+      onRenderSuccess={handleRenderSuccess}
+      renderTextLayer={false}
       renderAnnotationLayer={false}
-    />
+    >
+      {pageProxy && (
+        <CustomTextLayer
+          page={pageProxy}
+          scale={pdfScale}
+          canvasRenderComplete={canvasRenderComplete}
+          searchQuery={searchQuery}
+          isBrokenPage={isBrokenPage}
+          docId={docId}
+          pageNumber={pageNumber}
+        />
+      )}
+    </Page>
   );
 });
 SearchPageMemo.displayName = 'SearchPageMemo';
@@ -90,13 +123,14 @@ export function SearchPDFViewer({ pdfUrl, matchedPages, query, scale = DISPLAY_S
     rects: Array<{ x: number; y: number; width: number; height: number }>;
   }>({ show: false, x: 0, y: 0, text: '', pageNumber: 1, rects: [] });
   const [linkCopied, setLinkCopied] = useState(false);
-  const [searchHighlights, setSearchHighlights] = useState<Record<number, Array<{ x: number; y: number; width: number; height: number }>>>({});
+
+  // Broken pages set — pages where PDF.js text extraction is gibberish
+  const [brokenPages, setBrokenPages] = useState<Set<number>>(new Set());
 
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<any>(null);
   const pageHeightsRef = useRef<Record<number, number>>({});
   const pdfDocRef = useRef<any>(null);
-  const searchHighlightsRef = useRef<Record<number, Array<{ x: number; y: number; width: number; height: number }>>>({});
 
   // Track container size with ResizeObserver
   useEffect(() => {
@@ -136,21 +170,6 @@ export function SearchPDFViewer({ pdfUrl, matchedPages, query, scale = DISPLAY_S
         scrollTop += getRowHeight(i);
       }
 
-      // If we have search highlights for this page, scroll to the first match
-      const pageHighlights = searchHighlightsRef.current[pageNumber];
-      if (pageHighlights && pageHighlights.length > 0) {
-        // Find the topmost highlight on the page
-        const topmost = pageHighlights.reduce((min, h) => h.y < min.y ? h : min, pageHighlights[0]);
-        // Convert 1x PDF y-coordinate to screen pixels
-        scrollTop += topmost.y * DISPLAY_SCALE;
-
-        // Center the match vertically in the viewport
-        const scrollElement = listRef.current.element;
-        if (scrollElement) {
-          scrollTop = Math.max(0, scrollTop - scrollElement.clientHeight / 3);
-        }
-      }
-
       const scrollElement = listRef.current.element;
       if (scrollElement) {
         scrollElement.scrollTop = scrollTop;
@@ -169,9 +188,7 @@ export function SearchPDFViewer({ pdfUrl, matchedPages, query, scale = DISPLAY_S
     setError(null);
     setPageHeights({});
     setHeightsReady(false);
-    setSearchHighlights({});
     pageHeightsRef.current = {};
-    searchHighlightsRef.current = {};
     pdfDocRef.current = null;
   }, [pdfUrl]);
 
@@ -257,6 +274,17 @@ export function SearchPDFViewer({ pdfUrl, matchedPages, query, scale = DISPLAY_S
     setIsLoading(false);
     setError(null);
 
+    // Fetch document metadata to identify broken pages (non-blocking)
+    if (documentId) {
+      documentOcrApi.getMetadata(documentId).then((meta) => {
+        if (meta.broken_pages && meta.broken_pages.length > 0) {
+          setBrokenPages(new Set(meta.broken_pages));
+        }
+      }).catch((err) => {
+        console.warn('Failed to fetch document metadata:', err);
+      });
+    }
+
     // Pre-calculate all page heights
     try {
       const heights: Record<number, number> = {};
@@ -296,106 +324,18 @@ export function SearchPDFViewer({ pdfUrl, matchedPages, query, scale = DISPLAY_S
     console.error('PDF load error:', err, 'URL:', pdfUrl);
   }, [pdfUrl]);
 
-  // Compute search highlight rectangles from text item transforms
-  useEffect(() => {
-    if (!pdfDocRef.current || !query || query.length < 1 || !numPages) {
-      searchHighlightsRef.current = {};
-      setSearchHighlights({});
-      return;
-    }
-
-    let cancelled = false;
-
-    const computeHighlights = async () => {
-      const highlights: Record<number, Array<{ x: number; y: number; width: number; height: number }>> = {};
-      const searchLower = query.toLowerCase();
-
-      try {
-        for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-          if (cancelled) return;
-
-          const page = await pdfDocRef.current.getPage(pageNum);
-          const textContent = await page.getTextContent();
-          const viewport = page.getViewport({ scale: 1.0 });
-
-          let fullText = '';
-          const itemPositions: { start: number; item: any }[] = [];
-
-          textContent.items.forEach((item: any) => {
-            if (item.str) {
-              const start = fullText.length;
-              fullText += item.str + ' ';
-              itemPositions.push({ start, item });
-            }
-          });
-
-          const fullTextLower = fullText.toLowerCase();
-          let searchIndex = 0;
-          const pageRects: Array<{ x: number; y: number; width: number; height: number }> = [];
-
-          while ((searchIndex = fullTextLower.indexOf(searchLower, searchIndex)) !== -1) {
-            const matchEnd = searchIndex + searchLower.length;
-
-            for (const { start, item } of itemPositions) {
-              const itemText = item.str as string;
-              if (!itemText) continue;
-              const itemStrEnd = start + itemText.length;
-
-              if (start >= matchEnd || itemStrEnd <= searchIndex) continue;
-
-              const fontSize = Math.sqrt(item.transform[0] ** 2 + item.transform[1] ** 2);
-              const pdfX = item.transform[4];
-              const pdfY = item.transform[5];
-              const itemWidth = item.width;
-
-              const overlapStart = Math.max(searchIndex, start) - start;
-              const overlapEnd = Math.min(matchEnd, itemStrEnd) - start;
-
-              if (overlapStart >= overlapEnd) continue;
-
-              const xOffset = (overlapStart / itemText.length) * itemWidth;
-              const matchWidth = ((overlapEnd - overlapStart) / itemText.length) * itemWidth;
-
-              pageRects.push({
-                x: pdfX + xOffset,
-                y: viewport.height - pdfY - fontSize,
-                width: matchWidth,
-                height: fontSize,
-              });
-            }
-
-            searchIndex += searchLower.length;
-          }
-
-          if (pageRects.length > 0) {
-            highlights[pageNum] = pageRects;
-          }
-        }
-
-        if (!cancelled) {
-          searchHighlightsRef.current = highlights;
-          setSearchHighlights(highlights);
-        }
-      } catch (error) {
-        console.error('Failed to compute search highlights:', error);
-      }
-    };
-
-    computeHighlights();
-
-    return () => { cancelled = true; };
-  }, [query, numPages]);
-
-  // Row component — renders a single page with overlay-based search highlights
+  // Row component — renders a single page with text-layer search highlights
   const Row = useCallback((props: {
     index: number;
     style: React.CSSProperties;
     ariaAttributes: any;
     pdfScale: number;
-    searchHighlights: Record<number, Array<{ x: number; y: number; width: number; height: number }>>;
+    query: string;
+    brokenPages: Set<number>;
+    docId: string;
   }) => {
     const pageNum = props.index + 1;
-    const pageSearchHighlights = props.searchHighlights[pageNum];
+    const isBrokenPage = props.brokenPages.has(pageNum);
 
     return (
       <div style={{ ...props.style, display: 'flex', justifyContent: 'center' }} {...props.ariaAttributes}>
@@ -404,16 +344,10 @@ export function SearchPDFViewer({ pdfUrl, matchedPages, query, scale = DISPLAY_S
             <SearchPageMemo
               pageNumber={pageNum}
               pdfScale={props.pdfScale}
+              searchQuery={props.query}
+              isBrokenPage={isBrokenPage}
+              docId={props.docId}
             />
-
-            {pageSearchHighlights && pageSearchHighlights.length > 0 && (
-              <HighlightOverlay
-                rects={pageSearchHighlights}
-                pageWidth={TARGET_DISPLAY_WIDTH}
-                pageHeight={ESTIMATED_PAGE_HEIGHT}
-                renderScale={DISPLAY_SCALE}
-              />
-            )}
           </div>
         </div>
       </div>
@@ -422,8 +356,10 @@ export function SearchPDFViewer({ pdfUrl, matchedPages, query, scale = DISPLAY_S
 
   const rowProps = useMemo(() => ({
     pdfScale: scale,
-    searchHighlights,
-  }), [scale, searchHighlights]) as any;
+    query,
+    brokenPages,
+    docId: documentId,
+  }), [scale, query, brokenPages, documentId]) as any;
 
   return (
     <div ref={containerRef} className="h-full w-full bg-gray-100">

@@ -643,6 +643,33 @@ export const quickwitApi = {
     }),
 };
 
+// Document metadata & OCR API (hybrid PDF pipeline)
+export interface DocumentMetadata {
+  doc_id: string;
+  total_pages: number;
+  broken_pages: number[];
+}
+
+export interface OcrBbox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  word: string;
+}
+
+export const documentOcrApi = {
+  getMetadata: (docId: string) =>
+    apiClient.get<{ success: boolean; data: DocumentMetadata }>(
+      `/api/documents/${encodeURIComponent(docId)}/metadata`
+    ).then(res => res.data),
+
+  getOcrBboxes: (docId: string, pageNum: number) =>
+    apiClient.get<OcrBbox[]>(
+      `/api/documents/${encodeURIComponent(docId)}/pages/${pageNum}/ocr-bboxes`
+    ),
+};
+
 // Convenience service object
 export const apiService = {
   ...authApi,
@@ -655,6 +682,7 @@ export const apiService = {
   ...filingManagementApi,
   ...newSearchApi,
   ...quickwitApi,
+  ...documentOcrApi,
 };
 
 export default apiClient;

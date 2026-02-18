@@ -2,12 +2,16 @@
 
 import { useEffect, useRef } from 'react';
 import { pdfjs } from 'react-pdf';
+import { OcrTextLayer } from './OcrTextLayer';
 
 interface CustomTextLayerProps {
   page: any; // PDFPageProxy
   scale: number;
   canvasRenderComplete: boolean;
   searchQuery?: string;
+  isBrokenPage?: boolean;
+  docId?: string;
+  pageNumber?: number;
 }
 
 /**
@@ -59,22 +63,23 @@ function fixSpanWidths(
  */
 function highlightSearchMatches(
   textDivs: HTMLElement[],
-  textContentItemsStr: string[],
   query: string,
 ) {
   if (!query || query.length < 2) return;
 
   const queryLower = query.toLowerCase();
 
-  // Build concatenated text with span boundary tracking (mirrors performSearch)
+  // Build concatenated text from DOM elements directly to guarantee alignment
+  // (textContentItemsStr can be misaligned with textDivs when marked content is present)
   let fullText = '';
-  const spanRanges: { start: number; end: number; idx: number }[] = [];
+  const spanRanges: { start: number; end: number; idx: number; text: string }[] = [];
 
-  for (let i = 0; i < textDivs.length && i < textContentItemsStr.length; i++) {
-    const str = textContentItemsStr[i];
+  for (let i = 0; i < textDivs.length; i++) {
+    const str = textDivs[i].textContent || '';
+    if (!str) continue; // Skip empty spans (marked content structural elements)
     const start = fullText.length;
     fullText += str + ' ';
-    spanRanges.push({ start, end: start + str.length, idx: i });
+    spanRanges.push({ start, end: start + str.length, idx: i, text: str });
   }
 
   // Find all matches and collect per-span highlight ranges (local offsets)
@@ -103,7 +108,7 @@ function highlightSearchMatches(
   // For each span with highlights, split its textContent into fragments
   for (const [idx, ranges] of spanHighlights) {
     const span = textDivs[idx];
-    const text = textContentItemsStr[idx];
+    const text = span.textContent || '';
     if (!text) continue;
 
     // Merge overlapping ranges
@@ -166,11 +171,16 @@ function mergeRanges(ranges: { from: number; to: number }[]): { from: number; to
  * <Page> component so it inherits --scale-factor and positions correctly
  * via the .textLayer { inset: 0 } CSS rule.
  */
-export function CustomTextLayer({ page, scale, canvasRenderComplete, searchQuery }: CustomTextLayerProps) {
+export function CustomTextLayer({ page, scale, canvasRenderComplete, searchQuery, isBrokenPage, docId, pageNumber }: CustomTextLayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const textLayerRef = useRef<any>(null);
 
+  // For broken pages, delegate to OcrTextLayer instead of PDF.js TextLayer
+  const viewport = page?.getViewport({ scale });
+
   useEffect(() => {
+    // Skip native text layer rendering for broken pages
+    if (isBrokenPage) return;
     if (!canvasRenderComplete || !page || !containerRef.current) return;
 
     const container = containerRef.current;
@@ -178,7 +188,7 @@ export function CustomTextLayer({ page, scale, canvasRenderComplete, searchQuery
     // Clean up any previous render
     container.innerHTML = '';
 
-    const viewport = page.getViewport({ scale });
+    const vp = page.getViewport({ scale });
 
     let cancelled = false;
 
@@ -210,12 +220,12 @@ export function CustomTextLayer({ page, scale, canvasRenderComplete, searchQuery
         const textLayer = new pdfjs.TextLayer({
           textContentSource: textContent,
           container,
-          viewport,
+          viewport: vp,
         });
 
         // Override CSS calc dimensions with exact pixel values matching canvas
-        container.style.width = `${Math.floor(viewport.width)}px`;
-        container.style.height = `${Math.floor(viewport.height)}px`;
+        container.style.width = `${Math.floor(vp.width)}px`;
+        container.style.height = `${Math.floor(vp.height)}px`;
 
         textLayerRef.current = textLayer;
         await textLayer.render();
@@ -228,7 +238,6 @@ export function CustomTextLayer({ page, scale, canvasRenderComplete, searchQuery
         if (searchQuery) {
           highlightSearchMatches(
             textLayer.textDivs,
-            textLayer.textContentItemsStr,
             searchQuery,
           );
         }
@@ -253,10 +262,25 @@ export function CustomTextLayer({ page, scale, canvasRenderComplete, searchQuery
       }
       container.innerHTML = '';
     };
-  }, [page, scale, canvasRenderComplete, searchQuery]);
+  }, [page, scale, canvasRenderComplete, searchQuery, isBrokenPage]);
 
   if (!canvasRenderComplete) return null;
 
+  // Broken page: render OCR-based text layer
+  if (isBrokenPage && docId && pageNumber && viewport) {
+    return (
+      <OcrTextLayer
+        docId={docId}
+        pageNumber={pageNumber}
+        scale={scale}
+        viewportWidth={viewport.width}
+        viewportHeight={viewport.height}
+        searchQuery={searchQuery}
+      />
+    );
+  }
+
+  // Normal page: render native PDF.js text layer
   return (
     <div
       ref={containerRef}

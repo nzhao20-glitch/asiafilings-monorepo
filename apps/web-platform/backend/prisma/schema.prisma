@@ -45,6 +45,7 @@ model Filing {
   extraction_s3_key String?
   ingestedAt        DateTime? @map("ingested_at") @db.Timestamp(6)
   document_type     String?
+  brokenPages       Int[]     @default([]) @map("broken_pages")
 
   @@id([exchange, sourceId])
   @@index([exchange], map: "idx_filings_exchange")
