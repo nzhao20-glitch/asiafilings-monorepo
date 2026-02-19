@@ -96,7 +96,7 @@ variable "ocr_max_tasks" {
 }
 
 variable "ocr_messages_per_task" {
-  description = "Target visible SQS messages per running OCR task"
+  description = "Target backlog-per-task ratio (visible SQS messages / running OCR tasks)"
   type        = number
   default     = 6
 }
@@ -111,6 +111,24 @@ variable "ocr_scale_in_cooldown_seconds" {
   description = "Target tracking scale-in cooldown in seconds for OCR worker"
   type        = number
   default     = 300
+}
+
+variable "ocr_enable_container_insights" {
+  description = "Enable ECS Container Insights on OCR cluster (required for RunningTaskCount metric)"
+  type        = bool
+  default     = true
+}
+
+variable "ocr_enable_task_scale_in_protection" {
+  description = "Enable ECS task scale-in protection calls from OCR worker runtime"
+  type        = bool
+  default     = true
+}
+
+variable "ocr_task_scale_in_protection_minutes" {
+  description = "Task protection duration (minutes) while OCR worker processes a message"
+  type        = number
+  default     = 30
 }
 
 variable "ocr_queue_visibility_timeout_seconds" {

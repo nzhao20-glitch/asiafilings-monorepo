@@ -194,6 +194,8 @@ curl "http://quickwit:7280/api/v1/filings/search" \
 | `OCR_OUTPUT_BUCKET` | Bucket for OCR bbox JSON writes | `OUTPUT_BUCKET` |
 | `OCR_QUEUE_WAIT_SECONDS` | SQS long poll wait (OCR worker) | `20` |
 | `OCR_QUEUE_VISIBILITY_TIMEOUT` | Message visibility timeout (OCR worker) | `900` |
+| `ECS_SCALE_IN_PROTECTION_ENABLED` | Protect active OCR task from ECS service scale-in | `true` |
+| `ECS_TASK_PROTECTION_MINUTES` | ECS task protection TTL while processing a message | `30` |
 | `ENABLE_GIBBERISH_METRICS` | Publish CloudWatch metric for gibberish pages | `true` |
 | `GIBBERISH_METRIC_NAMESPACE` | CloudWatch namespace for gibberish metric | `AsiaFilings/DataPipeline` |
 | `GIBBERISH_METRIC_NAME` | CloudWatch metric name for gibberish pages | `GibberishPagesDetected` |
@@ -201,7 +203,7 @@ curl "http://quickwit:7280/api/v1/filings/search" \
 ## Infrastructure
 
 - **AWS Batch**: Fargate Spot compute (cost-effective)
-- **ECS/Fargate Spot OCR Worker**: scales 0..N from OCR queue depth
+- **ECS/Fargate Spot OCR Worker**: target tracking on backlog-per-task (`visible_messages / running_tasks`) with scale-to-zero and task scale-in protection
 - **S3**: Source PDFs + extraction outputs
 - **SQS**: Quickwit ingest queue + OCR queue + OCR DLQ
 - **CloudWatch Alarms**: OCR queue age + OCR DLQ depth

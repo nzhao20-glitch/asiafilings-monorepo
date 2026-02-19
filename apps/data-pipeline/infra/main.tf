@@ -141,6 +141,9 @@ module "ocr_worker" {
   ocr_messages_per_task             = var.ocr_messages_per_task
   ocr_scale_out_cooldown_seconds    = var.ocr_scale_out_cooldown_seconds
   ocr_scale_in_cooldown_seconds     = var.ocr_scale_in_cooldown_seconds
+  enable_container_insights         = var.ocr_enable_container_insights
+  enable_task_scale_in_protection   = var.ocr_enable_task_scale_in_protection
+  task_scale_in_protection_minutes  = var.ocr_task_scale_in_protection_minutes
   ocr_page_chunk_size               = var.ocr_page_chunk_size
   sqs_visibility_timeout_seconds    = var.ocr_queue_visibility_timeout_seconds
   sqs_receive_wait_seconds          = var.ocr_queue_receive_wait_seconds

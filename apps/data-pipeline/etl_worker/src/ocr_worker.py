@@ -5,7 +5,9 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import boto3
 import pymupdf
@@ -31,6 +33,12 @@ class OcrJob:
     metadata: Dict[str, str]
 
 
+@dataclass
+class EcsTaskIdentity:
+    cluster: str
+    task_arn: str
+
+
 def _read_int_env(name: str, default: int, minimum: int = 1, maximum: int = 2**31 - 1) -> int:
     raw_value = os.environ.get(name, str(default)).strip()
     try:
@@ -48,6 +56,48 @@ def _read_bool_env(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _discover_ecs_task_identity() -> Optional[EcsTaskIdentity]:
+    metadata_uri = os.environ.get("ECS_CONTAINER_METADATA_URI_V4", "").strip()
+    if not metadata_uri:
+        return None
+
+    try:
+        with urlopen(f"{metadata_uri}/task", timeout=2) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, URLError, ValueError) as exc:
+        logger.warning("Could not read ECS task metadata for scale-in protection: %s", exc)
+        return None
+
+    cluster = str(payload.get("Cluster", "")).strip()
+    task_arn = str(payload.get("TaskARN", "")).strip()
+    if not cluster or not task_arn:
+        logger.warning("ECS metadata is missing Cluster or TaskARN; disabling scale-in protection")
+        return None
+
+    return EcsTaskIdentity(cluster=cluster, task_arn=task_arn)
+
+
+def _set_task_protection(ecs_client, identity: EcsTaskIdentity, enabled: bool, expires_minutes: int) -> bool:
+    params = {
+        "cluster": identity.cluster,
+        "tasks": [identity.task_arn],
+        "protectionEnabled": enabled,
+    }
+    if enabled:
+        params["expiresInMinutes"] = expires_minutes
+
+    try:
+        result = ecs_client.update_task_protection(**params)
+        failures = result.get("failures") or []
+        if failures:
+            logger.warning("ECS task protection update failures: %s", failures)
+            return False
+        return True
+    except ClientError as exc:
+        logger.warning("Failed to update ECS task scale-in protection (enabled=%s): %s", enabled, exc)
+        return False
 
 
 def _parse_job(message_body: str) -> OcrJob:
@@ -204,18 +254,26 @@ def main() -> None:
     max_messages = _read_int_env("OCR_QUEUE_MAX_MESSAGES", 1, minimum=1, maximum=10)
     run_once = _read_bool_env("OCR_WORKER_RUN_ONCE", False)
     warm_model_on_startup = _read_bool_env("WARM_ONNXTR_ON_STARTUP", True)
+    scale_in_protection_enabled = _read_bool_env("ECS_SCALE_IN_PROTECTION_ENABLED", True)
+    task_protection_minutes = _read_int_env("ECS_TASK_PROTECTION_MINUTES", 30, minimum=1, maximum=2880)
 
     sqs_client = boto3.client("sqs")
     s3_client = boto3.client("s3")
+    ecs_client = boto3.client("ecs") if scale_in_protection_enabled else None
+    ecs_identity = _discover_ecs_task_identity() if scale_in_protection_enabled else None
+    if scale_in_protection_enabled and not ecs_identity:
+        scale_in_protection_enabled = False
 
     logger.info(
-        "Starting OCR worker (queue=%s, output_bucket=%s, output_prefix=%s, max_messages=%s, run_once=%s, warm_model=%s)",
+        "Starting OCR worker (queue=%s, output_bucket=%s, output_prefix=%s, max_messages=%s, run_once=%s, warm_model=%s, scale_in_protection=%s, protection_minutes=%s)",
         queue_url,
         output_bucket,
         output_prefix,
         max_messages,
         run_once,
         warm_model_on_startup,
+        scale_in_protection_enabled,
+        task_protection_minutes,
     )
 
     if warm_model_on_startup:
@@ -246,7 +304,19 @@ def main() -> None:
                 logger.warning("Received message without receipt handle: %s", message_id)
                 continue
 
+            task_protected = False
             try:
+                if scale_in_protection_enabled and ecs_client and ecs_identity:
+                    task_protected = _set_task_protection(
+                        ecs_client=ecs_client,
+                        identity=ecs_identity,
+                        enabled=True,
+                        expires_minutes=task_protection_minutes,
+                    )
+                    if not task_protected:
+                        scale_in_protection_enabled = False
+                        logger.warning("Disabling task scale-in protection after failed enable call")
+
                 job = _parse_job(body)
                 pages_processed, patch_key = _process_job(
                     job,
@@ -268,6 +338,16 @@ def main() -> None:
                     message_id,
                     exc,
                 )
+            finally:
+                if task_protected and ecs_client and ecs_identity:
+                    if not _set_task_protection(
+                        ecs_client=ecs_client,
+                        identity=ecs_identity,
+                        enabled=False,
+                        expires_minutes=task_protection_minutes,
+                    ):
+                        scale_in_protection_enabled = False
+                        logger.warning("Disabling task scale-in protection after failed disable call")
 
         if run_once:
             logger.info("Run-once mode complete")

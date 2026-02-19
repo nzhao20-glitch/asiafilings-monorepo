@@ -62,6 +62,21 @@ variable "ocr_scale_in_cooldown_seconds" {
   default = 300
 }
 
+variable "enable_container_insights" {
+  type    = bool
+  default = true
+}
+
+variable "enable_task_scale_in_protection" {
+  type    = bool
+  default = true
+}
+
+variable "task_scale_in_protection_minutes" {
+  type    = number
+  default = 30
+}
+
 variable "ocr_page_chunk_size" {
   type    = number
   default = 10
@@ -113,7 +128,8 @@ variable "dlq_messages_alarm_threshold" {
 }
 
 locals {
-  alarm_actions = var.alarm_sns_topic_arn != "" ? [var.alarm_sns_topic_arn] : []
+  alarm_actions               = var.alarm_sns_topic_arn != "" ? [var.alarm_sns_topic_arn] : []
+  backlog_per_task_expression = "IF(FILL(m2,0)>0,m1/FILL(m2,0),m1)"
 }
 
 resource "aws_cloudwatch_log_group" "ocr_worker" {
@@ -153,6 +169,11 @@ resource "aws_security_group" "ocr_worker" {
 
 resource "aws_ecs_cluster" "main" {
   name = "${var.name_prefix}-ocr"
+
+  setting {
+    name  = "containerInsights"
+    value = var.enable_container_insights ? "enabled" : "disabled"
+  }
 }
 
 resource "aws_ecs_cluster_capacity_providers" "main" {
@@ -255,6 +276,14 @@ resource "aws_iam_role_policy" "ocr_worker_task" {
           "arn:aws:s3:::${var.bucket_processed}/ocr-bboxes/*",
           "arn:aws:s3:::${var.bucket_processed}/processed/*"
         ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:UpdateTaskProtection",
+          "ecs:GetTaskProtection"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -288,7 +317,9 @@ resource "aws_ecs_task_definition" "ocr_worker" {
         { name = "OUTPUT_PREFIX", value = "processed" },
         { name = "OCR_PAGE_CHUNK_SIZE", value = tostring(var.ocr_page_chunk_size) },
         { name = "OCR_QUEUE_WAIT_SECONDS", value = tostring(var.sqs_receive_wait_seconds) },
-        { name = "OCR_QUEUE_VISIBILITY_TIMEOUT", value = tostring(var.sqs_visibility_timeout_seconds) }
+        { name = "OCR_QUEUE_VISIBILITY_TIMEOUT", value = tostring(var.sqs_visibility_timeout_seconds) },
+        { name = "ECS_SCALE_IN_PROTECTION_ENABLED", value = tostring(var.enable_task_scale_in_protection) },
+        { name = "ECS_TASK_PROTECTION_MINUTES", value = tostring(var.task_scale_in_protection_minutes) }
       ]
       logConfiguration = {
         logDriver = "awslogs"
@@ -351,13 +382,54 @@ resource "aws_appautoscaling_policy" "ocr_worker_queue_depth" {
     scale_in_cooldown  = var.ocr_scale_in_cooldown_seconds
 
     customized_metric_specification {
-      metric_name = "ApproximateNumberOfMessagesVisible"
-      namespace   = "AWS/SQS"
-      statistic   = "Average"
+      metrics {
+        id          = "m1"
+        return_data = false
 
-      dimensions {
-        name  = "QueueName"
-        value = aws_sqs_queue.ocr.name
+        metric_stat {
+          stat = "Sum"
+
+          metric {
+            metric_name = "ApproximateNumberOfMessagesVisible"
+            namespace   = "AWS/SQS"
+
+            dimensions {
+              name  = "QueueName"
+              value = aws_sqs_queue.ocr.name
+            }
+          }
+        }
+      }
+
+      metrics {
+        id          = "m2"
+        return_data = false
+
+        metric_stat {
+          stat = "Average"
+
+          metric {
+            metric_name = "RunningTaskCount"
+            namespace   = "ECS/ContainerInsights"
+
+            dimensions {
+              name  = "ClusterName"
+              value = aws_ecs_cluster.main.name
+            }
+
+            dimensions {
+              name  = "ServiceName"
+              value = aws_ecs_service.ocr_worker.name
+            }
+          }
+        }
+      }
+
+      metrics {
+        id          = "e1"
+        expression  = local.backlog_per_task_expression
+        label       = "BacklogPerTask"
+        return_data = true
       }
     }
   }
