@@ -71,7 +71,8 @@ variable "rds_username" {
 }
 
 variable "rds_password" {
-  description = "Master password (set via TF_VAR or tfvars, never in code)"
+  description = "Master password (leave empty to resolve from /platform/shared in SSM)"
   type        = string
+  default     = ""
   sensitive   = true
 }

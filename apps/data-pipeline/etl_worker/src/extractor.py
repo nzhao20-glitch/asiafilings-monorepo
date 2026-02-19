@@ -15,7 +15,6 @@ from typing import Dict, List, Optional, Tuple
 
 import boto3
 import pymupdf
-from bs4 import BeautifulSoup
 
 from s3_utils import upload_json
 
@@ -309,6 +308,9 @@ def process_html_bytes(
     doc_id = merged_meta.get('source_id') or filename.rsplit('.', 1)[0]
 
     try:
+        # Lazy import so OCR-only runtime images do not need HTML parsing deps.
+        from bs4 import BeautifulSoup
+
         html_bytes = decompress_if_gzip(html_bytes)
 
         html_text = None

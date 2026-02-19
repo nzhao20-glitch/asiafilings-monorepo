@@ -12,7 +12,11 @@ bucket_processed = "filing-extractions-128638789653"
 create_buckets   = false
 
 # Batch Configuration
+# Optional if stored in SSM: /platform/etl/<env>/ECR_IMAGE_URI
 ecr_image_uri = "123456789012.dkr.ecr.ap-east-1.amazonaws.com/filing-etl:latest"
+# Optional: dedicated OCR image (recommended to use immutable digest)
+# Optional if stored in SSM: /platform/etl/<env>/OCR_ECR_IMAGE_URI
+# ocr_ecr_image_uri = "123456789012.dkr.ecr.ap-east-1.amazonaws.com/filing-etl-ocr@sha256:..."
 batch_vcpus   = 1
 batch_memory  = 2048
 chunk_size    = 1000
@@ -43,7 +47,10 @@ quickwit_indexer_instance_types  = ["t4g.medium", "t4g.large"]
 quickwit_searcher_instance_types = ["r7gd.xlarge", "m6gd.xlarge"]
 quickwit_key_pair               = ""
 quickwit_version                = "0.8.1"
-rds_password                    = "change-me-to-a-strong-password"
+# Optional if stored in SSM:
+# - /platform/etl/<env>/RDS_PASSWORD
+# - /platform/shared/RDS_PASSWORD
+# rds_password = "change-me-to-a-strong-password"
 
 # Network Configuration
 vpc_id     = "vpc-xxxxxxxxx"

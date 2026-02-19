@@ -29,8 +29,9 @@ variable "s3_prefix" {
 }
 
 variable "database_url" {
-  description = "PostgreSQL connection string"
+  description = "PostgreSQL connection string (leave empty to resolve from SSM)"
   type        = string
+  default     = ""
   sensitive   = true
 }
 
@@ -127,7 +128,7 @@ variable "schedule_enabled" {
 # -----------------------------------------------------------------------------
 
 variable "batch_ecr_image_uri" {
-  description = "ECR image URI for batch download worker"
+  description = "ECR image URI for batch download worker (leave empty to resolve from SSM)"
   type        = string
   default     = ""
 }

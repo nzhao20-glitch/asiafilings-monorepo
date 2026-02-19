@@ -1,0 +1,29 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    ONNXTR_CACHE_DIR=/app/.models_cache
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# OCR image intentionally installs a smaller dependency set than batch image.
+COPY requirements-ocr.txt ./
+RUN pip install --no-cache-dir -r requirements-ocr.txt
+
+# Preload OnnxTR artifacts into the image to avoid runtime model downloads.
+COPY preload.py ./
+RUN mkdir -p "${ONNXTR_CACHE_DIR}" && python preload.py
+
+COPY src/ ./
+
+RUN useradd --create-home --shell /bin/bash worker && chown -R worker:worker /app
+USER worker
+
+ENTRYPOINT ["python", "ocr_worker.py"]

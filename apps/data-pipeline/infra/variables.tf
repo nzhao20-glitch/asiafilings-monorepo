@@ -49,8 +49,15 @@ variable "batch_memory" {
 }
 
 variable "ecr_image_uri" {
-  description = "ECR image URI for the ETL worker"
+  description = "ECR image URI for the ETL worker (leave empty to resolve from SSM)"
   type        = string
+  default     = ""
+}
+
+variable "ocr_ecr_image_uri" {
+  description = "Optional dedicated ECR image URI for OCR ECS worker (supports immutable @sha256 digests)"
+  type        = string
+  default     = ""
 }
 
 variable "chunk_size" {
@@ -205,8 +212,9 @@ variable "rds_host" {
 }
 
 variable "rds_password" {
-  description = "RDS PostgreSQL password for Quickwit metastore"
+  description = "RDS PostgreSQL password for Quickwit metastore (leave empty to resolve from SSM)"
   type        = string
+  default     = ""
   sensitive   = true
 }
 

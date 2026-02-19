@@ -86,7 +86,7 @@ resource "aws_lambda_function" "downloader" {
 
   environment {
     variables = {
-      DATABASE_URL   = var.database_url
+      DATABASE_URL   = local.database_url
       S3_BUCKET      = data.aws_s3_bucket.pdfs.bucket
       S3_PREFIX      = var.s3_prefix
       CONCURRENCY    = tostring(var.lambda_concurrency)

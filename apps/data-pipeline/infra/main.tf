@@ -59,19 +59,58 @@ data "aws_ssm_parameters_by_path" "shared" {
   with_decryption = true
 }
 
+data "aws_ssm_parameters_by_path" "app" {
+  path            = "/platform/etl/${var.environment}/"
+  recursive       = false
+  with_decryption = true
+}
+
 locals {
-  name_prefix           = "${var.project_name}-${var.environment}"
-  vpc_id                = var.vpc_id != "" ? var.vpc_id : data.aws_ssm_parameter.vpc_id.value
-  subnet_ids            = var.subnet_ids != null ? var.subnet_ids : split(",", data.aws_ssm_parameter.subnet_ids.value)
-  bucket_raw            = var.bucket_raw != "" ? var.bucket_raw : data.aws_ssm_parameter.s3_pdf_bucket.value
-  bucket_processed      = var.bucket_processed != "" ? var.bucket_processed : data.aws_ssm_parameter.s3_extraction_bucket.value
-  rds_host              = var.rds_host != "" ? var.rds_host : data.aws_ssm_parameter.rds_host.value
-  shared_ssm_parameters = zipmap(data.aws_ssm_parameters_by_path.shared.names, data.aws_ssm_parameters_by_path.shared.values)
-  database_url_from_ssm = lookup(local.shared_ssm_parameters, "/platform/shared/DATABASE_URL", "")
+  name_prefix      = "${var.project_name}-${var.environment}"
+  vpc_id           = var.vpc_id != "" ? var.vpc_id : data.aws_ssm_parameter.vpc_id.value
+  subnet_ids       = var.subnet_ids != null ? var.subnet_ids : split(",", data.aws_ssm_parameter.subnet_ids.value)
+  bucket_raw       = var.bucket_raw != "" ? var.bucket_raw : data.aws_ssm_parameter.s3_pdf_bucket.value
+  bucket_processed = var.bucket_processed != "" ? var.bucket_processed : data.aws_ssm_parameter.s3_extraction_bucket.value
+  rds_host         = var.rds_host != "" ? var.rds_host : data.aws_ssm_parameter.rds_host.value
+  shared_ssm_parameters = zipmap(
+    data.aws_ssm_parameters_by_path.shared.names,
+    data.aws_ssm_parameters_by_path.shared.values
+  )
+  app_ssm_parameters = zipmap(
+    data.aws_ssm_parameters_by_path.app.names,
+    data.aws_ssm_parameters_by_path.app.values
+  )
+  ecr_image_uri_from_ssm = lookup(local.app_ssm_parameters, "/platform/etl/${var.environment}/ECR_IMAGE_URI", "")
+  ocr_ecr_image_uri_from_ssm = lookup(
+    local.app_ssm_parameters,
+    "/platform/etl/${var.environment}/OCR_ECR_IMAGE_URI",
+    ""
+  )
+  ecr_image_uri = var.ecr_image_uri != "" ? var.ecr_image_uri : local.ecr_image_uri_from_ssm
+  ocr_image_uri = var.ocr_ecr_image_uri != "" ? var.ocr_ecr_image_uri : (
+    local.ocr_ecr_image_uri_from_ssm != "" ? local.ocr_ecr_image_uri_from_ssm : local.ecr_image_uri
+  )
+  app_database_url_from_ssm    = lookup(local.app_ssm_parameters, "/platform/etl/${var.environment}/DATABASE_URL", "")
+  shared_database_url_from_ssm = lookup(local.shared_ssm_parameters, "/platform/shared/DATABASE_URL", "")
+  database_url_from_ssm        = local.app_database_url_from_ssm != "" ? local.app_database_url_from_ssm : local.shared_database_url_from_ssm
+  app_rds_password_from_ssm    = lookup(local.app_ssm_parameters, "/platform/etl/${var.environment}/RDS_PASSWORD", "")
+  app_rds_password_legacy_from_ssm = lookup(
+    local.app_ssm_parameters,
+    "/platform/etl/${var.environment}/rds_password",
+    ""
+  )
+  shared_rds_password_from_ssm        = lookup(local.shared_ssm_parameters, "/platform/shared/RDS_PASSWORD", "")
+  shared_rds_password_legacy_from_ssm = lookup(local.shared_ssm_parameters, "/platform/shared/rds_password", "")
+  rds_password_from_ssm = local.app_rds_password_from_ssm != "" ? local.app_rds_password_from_ssm : (
+    local.app_rds_password_legacy_from_ssm != "" ? local.app_rds_password_legacy_from_ssm : (
+      local.shared_rds_password_from_ssm != "" ? local.shared_rds_password_from_ssm : local.shared_rds_password_legacy_from_ssm
+    )
+  )
+  rds_password = var.rds_password != "" ? var.rds_password : local.rds_password_from_ssm
   database_url = var.database_url != "" ? var.database_url : (
     local.database_url_from_ssm != "" ? local.database_url_from_ssm : format(
       "postgresql://postgres:%s@%s:5432/postgres",
-      urlencode(var.rds_password),
+      urlencode(local.rds_password),
       local.rds_host
     )
   )
@@ -106,7 +145,7 @@ module "batch" {
   name_prefix         = local.name_prefix
   vpc_id              = local.vpc_id
   subnet_ids          = local.subnet_ids
-  ecr_image_uri       = var.ecr_image_uri
+  ecr_image_uri       = local.ecr_image_uri
   batch_vcpus         = var.batch_vcpus
   batch_memory        = var.batch_memory
   chunk_size          = var.chunk_size
@@ -132,7 +171,7 @@ module "ocr_worker" {
   name_prefix                       = local.name_prefix
   vpc_id                            = local.vpc_id
   subnet_ids                        = local.subnet_ids
-  ecr_image_uri                     = var.ecr_image_uri
+  ecr_image_uri                     = local.ocr_image_uri
   bucket_raw                        = local.bucket_raw
   bucket_processed                  = local.bucket_processed
   ocr_worker_cpu                    = var.ocr_worker_cpu
@@ -170,7 +209,7 @@ module "quickwit" {
   key_pair                = var.quickwit_key_pair
   quickwit_version        = var.quickwit_version
   rds_host                = local.rds_host
-  rds_password            = var.rds_password
+  rds_password            = local.rds_password
   bucket_raw              = local.bucket_raw
   bucket_processed        = local.bucket_processed
   sqs_queue_arn           = module.s3.sqs_queue_arn

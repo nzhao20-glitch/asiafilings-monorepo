@@ -1,0 +1,3 @@
+boto3>=1.34.0
+pymupdf>=1.24.0
+onnxtr[cpu-headless]>=0.8.0

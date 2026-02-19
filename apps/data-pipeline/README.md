@@ -64,15 +64,21 @@ cp terraform.tfvars.example terraform.tfvars
 terraform init && terraform apply
 ```
 
-### 2. Build & Push Docker Image
+### 2. Build & Push Docker Images
 
 ```bash
 # Create ECR repo (one-time)
 aws ecr create-repository --repository-name filing-etl --region ap-east-1
 
-# Build and push
+# Build and push batch image
 make push
+
+# Build and push OCR-optimized preloaded image
+# (prints immutable URI you can paste into infra/terraform.tfvars)
+make push-ocr
 ```
+
+For fastest OCR cold starts, set `ocr_ecr_image_uri` to an immutable digest (`...@sha256:...`) in `infra/terraform.tfvars`.
 
 ### 3. Generate Manifest
 
@@ -204,6 +210,7 @@ curl "http://quickwit:7280/api/v1/filings/search" \
 
 - **AWS Batch**: Fargate Spot compute (cost-effective)
 - **ECS/Fargate Spot OCR Worker**: target tracking on backlog-per-task (`visible_messages / running_tasks`) with scale-to-zero and task scale-in protection
+- **ECR Images**: optional dedicated OCR image (`ocr_ecr_image_uri`) so OCR workers can run a prebuilt pinned image independent of Batch
 - **S3**: Source PDFs + extraction outputs
 - **SQS**: Quickwit ingest queue + OCR queue + OCR DLQ
 - **CloudWatch Alarms**: OCR queue age + OCR DLQ depth

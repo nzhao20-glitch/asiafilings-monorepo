@@ -46,3 +46,18 @@ data "aws_caller_identity" "current" {}
 data "aws_availability_zones" "available" {
   state = "available"
 }
+
+data "aws_ssm_parameters_by_path" "shared" {
+  path            = "/platform/shared/"
+  recursive       = false
+  with_decryption = true
+}
+
+locals {
+  shared_ssm_parameters        = zipmap(data.aws_ssm_parameters_by_path.shared.names, data.aws_ssm_parameters_by_path.shared.values)
+  rds_password_from_ssm        = lookup(local.shared_ssm_parameters, "/platform/shared/RDS_PASSWORD", "")
+  rds_password_legacy_from_ssm = lookup(local.shared_ssm_parameters, "/platform/shared/rds_password", "")
+  rds_password = var.rds_password != "" ? var.rds_password : (
+    local.rds_password_from_ssm != "" ? local.rds_password_from_ssm : local.rds_password_legacy_from_ssm
+  )
+}

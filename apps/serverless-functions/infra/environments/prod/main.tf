@@ -51,11 +51,35 @@ data "aws_ssm_parameter" "s3_pdf_bucket" {
   name = "/platform/core/${var.environment}/s3_pdf_bucket"
 }
 
+data "aws_ssm_parameters_by_path" "shared" {
+  path            = "/platform/shared/"
+  recursive       = false
+  with_decryption = true
+}
+
+data "aws_ssm_parameters_by_path" "app" {
+  path            = "/platform/lambda/${var.environment}/"
+  recursive       = false
+  with_decryption = true
+}
+
 locals {
-  vpc_id                 = var.vpc_id != "" ? var.vpc_id : data.aws_ssm_parameter.vpc_id.value
-  subnet_ids             = var.subnet_ids != null ? var.subnet_ids : split(",", data.aws_ssm_parameter.subnet_ids.value)
-  rds_security_group_id  = var.rds_security_group_id != "" ? var.rds_security_group_id : data.aws_ssm_parameter.rds_security_group_id.value
-  pdf_bucket_name        = var.pdf_bucket != "" ? var.pdf_bucket : data.aws_ssm_parameter.s3_pdf_bucket.value
+  shared_ssm_parameters        = zipmap(data.aws_ssm_parameters_by_path.shared.names, data.aws_ssm_parameters_by_path.shared.values)
+  app_ssm_parameters           = zipmap(data.aws_ssm_parameters_by_path.app.names, data.aws_ssm_parameters_by_path.app.values)
+  app_database_url_from_ssm    = lookup(local.app_ssm_parameters, "/platform/lambda/${var.environment}/DATABASE_URL", "")
+  shared_database_url_from_ssm = lookup(local.shared_ssm_parameters, "/platform/shared/DATABASE_URL", "")
+  database_url = var.database_url != "" ? var.database_url : (
+    local.app_database_url_from_ssm != "" ? local.app_database_url_from_ssm : local.shared_database_url_from_ssm
+  )
+  batch_ecr_image_uri_from_ssm          = lookup(local.app_ssm_parameters, "/platform/lambda/${var.environment}/BATCH_ECR_IMAGE_URI", "")
+  batch_ecr_image_uri_fallback_from_ssm = lookup(local.app_ssm_parameters, "/platform/lambda/${var.environment}/ECR_IMAGE_URI", "")
+  batch_ecr_image_uri = var.batch_ecr_image_uri != "" ? var.batch_ecr_image_uri : (
+    local.batch_ecr_image_uri_from_ssm != "" ? local.batch_ecr_image_uri_from_ssm : local.batch_ecr_image_uri_fallback_from_ssm
+  )
+  vpc_id                = var.vpc_id != "" ? var.vpc_id : data.aws_ssm_parameter.vpc_id.value
+  subnet_ids            = var.subnet_ids != null ? var.subnet_ids : split(",", data.aws_ssm_parameter.subnet_ids.value)
+  rds_security_group_id = var.rds_security_group_id != "" ? var.rds_security_group_id : data.aws_ssm_parameter.rds_security_group_id.value
+  pdf_bucket_name       = var.pdf_bucket != "" ? var.pdf_bucket : data.aws_ssm_parameter.s3_pdf_bucket.value
 }
 
 # Reference existing S3 buckets (shared with filing-etl-pipeline)
