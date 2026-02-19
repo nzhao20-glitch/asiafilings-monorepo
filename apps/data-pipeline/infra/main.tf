@@ -139,6 +139,8 @@ module "ocr_worker" {
   ocr_worker_memory                 = var.ocr_worker_memory
   ocr_max_tasks                     = var.ocr_max_tasks
   ocr_messages_per_task             = var.ocr_messages_per_task
+  ocr_scale_out_cooldown_seconds    = var.ocr_scale_out_cooldown_seconds
+  ocr_scale_in_cooldown_seconds     = var.ocr_scale_in_cooldown_seconds
   ocr_page_chunk_size               = var.ocr_page_chunk_size
   sqs_visibility_timeout_seconds    = var.ocr_queue_visibility_timeout_seconds
   sqs_receive_wait_seconds          = var.ocr_queue_receive_wait_seconds

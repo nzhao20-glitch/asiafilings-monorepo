@@ -86,19 +86,31 @@ variable "ocr_worker_cpu" {
 variable "ocr_worker_memory" {
   description = "Memory (MB) for OCR ECS tasks"
   type        = number
-  default     = 2048
+  default     = 4096
 }
 
 variable "ocr_max_tasks" {
   description = "Maximum OCR ECS tasks for autoscaling"
   type        = number
-  default     = 128
+  default     = 24
 }
 
 variable "ocr_messages_per_task" {
   description = "Target visible SQS messages per running OCR task"
   type        = number
-  default     = 1
+  default     = 6
+}
+
+variable "ocr_scale_out_cooldown_seconds" {
+  description = "Target tracking scale-out cooldown in seconds for OCR worker"
+  type        = number
+  default     = 90
+}
+
+variable "ocr_scale_in_cooldown_seconds" {
+  description = "Target tracking scale-in cooldown in seconds for OCR worker"
+  type        = number
+  default     = 300
 }
 
 variable "ocr_queue_visibility_timeout_seconds" {

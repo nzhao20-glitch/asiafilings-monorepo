@@ -22,9 +22,11 @@ ocr_page_chunk_size = 10
 
 # OCR Worker autoscaling
 ocr_worker_cpu                      = 1024
-ocr_worker_memory                   = 2048
-ocr_max_tasks                       = 128
-ocr_messages_per_task               = 1
+ocr_worker_memory                   = 4096
+ocr_max_tasks                       = 24
+ocr_messages_per_task               = 6
+ocr_scale_out_cooldown_seconds      = 90
+ocr_scale_in_cooldown_seconds       = 300
 ocr_queue_visibility_timeout_seconds = 1200
 ocr_queue_receive_wait_seconds      = 20
 ocr_dlq_max_receive_count           = 5

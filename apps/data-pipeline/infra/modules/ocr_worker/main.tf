@@ -39,7 +39,7 @@ variable "ocr_worker_cpu" {
 
 variable "ocr_worker_memory" {
   type    = number
-  default = 2048
+  default = 4096
 }
 
 variable "ocr_max_tasks" {
@@ -50,6 +50,16 @@ variable "ocr_max_tasks" {
 variable "ocr_messages_per_task" {
   type    = number
   default = 1
+}
+
+variable "ocr_scale_out_cooldown_seconds" {
+  type    = number
+  default = 90
+}
+
+variable "ocr_scale_in_cooldown_seconds" {
+  type    = number
+  default = 300
 }
 
 variable "ocr_page_chunk_size" {
@@ -266,9 +276,9 @@ resource "aws_ecs_task_definition" "ocr_worker" {
 
   container_definitions = jsonencode([
     {
-      name      = "ocr-worker"
-      image     = var.ecr_image_uri
-      essential = true
+      name       = "ocr-worker"
+      image      = var.ecr_image_uri
+      essential  = true
       entryPoint = ["python"]
       command    = ["ocr_worker.py"]
       environment = [
@@ -337,8 +347,8 @@ resource "aws_appautoscaling_policy" "ocr_worker_queue_depth" {
 
   target_tracking_scaling_policy_configuration {
     target_value       = var.ocr_messages_per_task
-    scale_out_cooldown = 30
-    scale_in_cooldown  = 60
+    scale_out_cooldown = var.ocr_scale_out_cooldown_seconds
+    scale_in_cooldown  = var.ocr_scale_in_cooldown_seconds
 
     customized_metric_specification {
       metric_name = "ApproximateNumberOfMessagesVisible"
