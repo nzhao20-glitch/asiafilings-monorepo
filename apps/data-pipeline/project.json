@@ -14,7 +14,7 @@
     "test": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cd etl_worker && pip install -r requirements.txt && cd src && python -c \"from extractor import process_pdf_bytes; print('Extractor module OK')\"",
+        "command": "cd etl_worker && pip install -r requirements.txt && PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py' -v",
         "cwd": "apps/data-pipeline"
       }
     },
