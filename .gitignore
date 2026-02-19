@@ -65,6 +65,7 @@ Thumbs.db
 # Terraform
 *.tfstate
 *.tfstate.*
+*.tfplan
 terraform.tfvars
 .terraform/
 
